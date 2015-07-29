@@ -20,18 +20,18 @@ echidna.output.plot_chi_squared module
     :undoc-members:
     :show-inheritance:
 
-echidna.output.plot_root module
--------------------------------
+echidna.output.plot_chi_squared_root module
+-------------------------------------------
 
-.. automodule:: echidna.output.plot_root
+.. automodule:: echidna.output.plot_chi_squared_root
     :members:
     :undoc-members:
     :show-inheritance:
 
-echidna.output.plot_spectra module
-----------------------------------
+echidna.output.plot_root module
+-------------------------------
 
-.. automodule:: echidna.output.plot_spectra
+.. automodule:: echidna.output.plot_root
     :members:
     :undoc-members:
     :show-inheritance:

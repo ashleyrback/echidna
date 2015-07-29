@@ -4,6 +4,14 @@ echidna.scripts package
 Submodules
 ----------
 
+echidna.scripts.Xe136_majoron_limit module
+------------------------------------------
+
+.. automodule:: echidna.scripts.Xe136_majoron_limit
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 echidna.scripts.combine_hdf5 module
 -----------------------------------
 
@@ -52,14 +60,6 @@ echidna.scripts.rebin module
     :undoc-members:
     :show-inheritance:
 
-echidna.scripts.penalty_term module
------------------------------------
-
-.. automodule:: echidna.scripts.penalty_term
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
 echidna.scripts.snoplus_majoron_limit module
 --------------------------------------------
 
@@ -72,14 +72,6 @@ echidna.scripts.zero_nu_limit module
 ------------------------------------
 
 .. automodule:: echidna.scripts.zero_nu_limit
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-echidna.scripts.zero_nu_limit_iop module
-----------------------------------------
-
-.. automodule:: echidna.scripts.zero_nu_limit_iop
     :members:
     :undoc-members:
     :show-inheritance:
