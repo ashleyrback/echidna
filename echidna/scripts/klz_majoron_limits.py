@@ -264,7 +264,7 @@ def main(args):
     # Load signals
     signals = []
     if args_config.get("signals") is not None:
-        for name, filename in args_config.get("signals").iteritems():
+        for filename in args_config.get("signals"):
             logger.info("Using signal spectrum: %s" % filename)
             signal = store.load(filename)
 

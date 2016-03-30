@@ -147,12 +147,20 @@ class Fit(object):
             self._minimiser = None
             self._logger.warning("Minimiser could not be set because: %s" %
                                  detail)
+        except IndexError as detail:
+            self._minimiser = None
+            self._logger.warning("Minimiser could not be set because: %s" %
+                                 detail)
 
         try:
             self.set_fit_results(fit_results)
         except CompatibilityError as detail:
             self._fit_results = None
             self._logger.warning("Fit results could not be set because: %s" %
+                                 detail)
+        except IndexError as detail:
+            self._fit_results = None
+            self._logger.warning("Minimiser could not be set because: %s" %
                                  detail)
 
         self._use_pre_made = use_pre_made
@@ -262,12 +270,13 @@ class Fit(object):
             fit_results.
           ValueError: If (un)expected per_bin flag in test_statistic.
         """
+        # Check all spectra
         self.check_all_spectra()
 
         # Check fit parameters
-        if len(self.get_fit_config().get_pars()) == 0:
-            raise IndexError("No parameters found in fit config.")
-        if self._floating_backgrounds is not None:
+        if self._floating_backgrounds:
+            if len(self.get_fit_config().get_pars()) == 0:
+                raise IndexError("No parameters found in fit config.")
             if (len(self.get_fit_config().get_spectra_pars()) !=
                     len(self._floating_backgrounds)):
                 self._logger.error(
@@ -275,6 +284,21 @@ class Fit(object):
                     str(self.get_fit_config().get_spectra_pars()))
                 raise ValueError("Number of spectral fit pars and "
                                  "number of floating backgrounds do not match")
+
+            # Check minimiser and fit results
+            if self._minimiser is None:
+                raise AttributeError("Minimiser has not been set.")
+            if self._fit_results is None:
+                raise AttributeError("Fit results has not been set.")
+
+            # Check per_bin propagation
+            if self._per_bin:
+                if not self._minimiser._per_bin:
+                    raise ValueError("Expected per_bin True flag in minimiser")
+            else:
+                if self._minimiser._per_bin:
+                    raise ValueError("Unexpected per_bin "
+                                     "True flag in minimiser")
         else:
             if len(self.get_fit_config().get_spectra_pars()) != 0:
                 self._logger.error(
@@ -282,20 +306,6 @@ class Fit(object):
                     str(self.get_fit_config().get_spectra_pars()))
                 raise ValueError("Expected 0 spectral fit pars for "
                                  "no floating backgrounds")
-
-        # Check minimiser and fit results
-        if self._minimiser is None:
-            raise AttributeError("Minimiser has not been set.")
-        if self._fit_results is None:
-            raise AttributeError("Fit results has not been set.")
-
-        # Check per_bin propagation
-        if self._per_bin:
-            if not self._minimiser._per_bin:
-                raise ValueError("Expected per_bin True flag in minimiser")
-        else:
-            if self._minimiser._per_bin:
-                raise ValueError("Unexpected per_bin True flag in minimiser")
 
         if not self._test_statistic._per_bin:
             raise ValueError("Expected per_bin True flag in test_statistic")
@@ -456,8 +466,7 @@ class Fit(object):
         """ Gets the value of the test statistic used for fitting.
 
         Returns:
-          float or :class:`numpy.array`: The resulting test statisic(s)
-            dependent upon what method is used to compute the statistic.
+          float: The resulting test statisic value.
         """
         if not self._checked:
             self.check_fitter()
@@ -467,8 +476,9 @@ class Fit(object):
             expected = self._fixed_background.nd_project(self._fixed_pars)
             if self._signal:
                 expected += self._signal.nd_project(self._signal_pars)
-            return self._test_statistic.compute_statistic(observed.ravel(),
-                                                          expected.ravel())
+            return numpy.sum(  # Always want to return float
+                self._test_statistic.compute_statistic(
+                    observed.ravel(), expected.ravel()))
         else:  # Pass to minimiser
             if self._minimiser is None:
                 raise AttributeError("Minimiser is not set.")
@@ -683,14 +693,16 @@ class Fit(object):
         Raises:
           IndexError: If fit config contains no parameters.
         """
+        if len(self.get_fit_config().get_pars()) == 0:
+            raise IndexError("No parameters found in fit config.")
+
         self.check_all_spectra()  # All spectra should be set and checked first
+
         if fit_results:
             self._fit_results = fit_results
             self._logger.debug("Setting %s as fit_results" %
                                fit_results.get_name())
         else:  # If using GridSearch minimiser this is should befit_results
-            if len(self.get_fit_config().get_pars()) == 0:
-                raise IndexError("No parameters found in fit config.")
             if isinstance(self._minimiser, GridSearch):
                 self._fit_results = self._minimiser
                 self._logger.debug("Setting GridSearch (%s) as fit_results" %
@@ -750,14 +762,17 @@ class Fit(object):
         Raises:
           IndexError: If fit config contains no parameters.
         """
+        # Can't set minimiser if no fit parameters
+        if len(self.get_fit_config().get_pars()) == 0:
+            raise IndexError("No parameters found in fit config.")
+
         self.check_all_spectra()  # All spectra should be set and checked first
+
         if minimiser:
             self._minimiser = minimiser
             self._logger.debug("Setting %s as minimiser" %
                                minimiser.get_name())
         else:  # Use default GridSearch
-            if len(self.get_fit_config().get_pars()) == 0:
-                raise IndexError("No parameters found in fit config.")
             if self._per_bin:
                 self._minimiser = GridSearch(
                     fit_config=self._fit_config,
