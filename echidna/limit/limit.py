@@ -130,7 +130,7 @@ class Limit(object):
                 fit_stats = fit_stats[0]
             min_stat = copy.copy(fit_stats)
             self._logger.info("Calculated stat_zero: %s" % min_stat)
-            fit_results = copy.deepcopy(self._fitter.get_minimiser())
+            fit_results = copy.copy(self._fitter.get_minimiser())
             if fit_results:
                 self._logger.info("Fit summary:")
                 logging.getLogger("extra").info(
@@ -152,7 +152,7 @@ class Limit(object):
         logging.getLogger("extra").debug(str(par.get_values()))
         for i, scale in enumerate(par.get_values()):
             self._logger.debug("signal scale: %.4g" % scale)
-            print "scale", scale
+#            print "scale", scale
             if not numpy.isclose(scale, 0.):
                 if self._fitter.get_signal() is None:
                     self._fitter.set_signal(self._signal, shrink=False)
@@ -167,7 +167,7 @@ class Limit(object):
                 fit_stats = fit_stats[0]
             stats[i] = fit_stats
 
-            fit_results = copy.deepcopy(self._fitter.get_minimiser())
+            fit_results = copy.copy(self._fitter.get_minimiser())
             if fit_results:
                 results_summary = fit_results.get_summary()
                 for par_name, value in results_summary.iteritems():
