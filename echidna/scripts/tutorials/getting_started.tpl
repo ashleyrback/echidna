@@ -16,7 +16,7 @@ This script:
 
 This file has been generated automatically by running::
 
-    (ENV) $ jupyter nbconvert --to python --template getting_started
+    (ENV) $ jupyter nbconvert --to python --template getting_started.tpl
 getting_started.ipynb
 
 Examples:
@@ -25,8 +25,10 @@ Examples:
     $ python echidna/scripts/tutorials/getting_started.py
 
 """
+import matplotlib.pyplot as plt
+
 if __name__ == "__main__":  # for running as a standalone python script too!
-    import matplotlib.pyplot as plt
+    print ""  # need an indented bock
 {% endblock header -%}
 
 ## Comment out magic cells and...
@@ -36,6 +38,12 @@ if __name__ == "__main__":  # for running as a standalone python script too!
 {# - sign removes trailing whitespace#}
 {%- if cell['metadata'].get('magic', {}) -%}
 {{ cell.source|comment_lines() }}
+{%- elif cell['metadata'].get('function', {}) %}
+{{ cell.source }}
+
+
+if __name__ == "__main__":
+    print ""  # need an indented bock
 {% else -%}
 {%- for line in cell.source.split("\n") -%}
 {%- if line != "" -%}

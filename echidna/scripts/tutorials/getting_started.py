@@ -13,8 +13,8 @@ This script:
 
 This file has been generated automatically by running::
 
-    (ENV) $ jupyter nbconvert --to python --template getting_started
-    getting_started.ipynb
+    (ENV) $ jupyter nbconvert --to python --template getting_started.tpl
+getting_started.ipynb
 
 Examples:
   To run (from the base directory)::
@@ -22,8 +22,10 @@ Examples:
     $ python echidna/scripts/tutorials/getting_started.py
 
 """
+import matplotlib.pyplot as plt
+
 if __name__ == "__main__":  # for running as a standalone python script too!
-    import matplotlib.pyplot as plt
+    print ""  # need an indented bock
 
 # First set up environment with convenience imports and inline plotting:
 # <!--- The following cell should be commented out in the python script
@@ -33,7 +35,6 @@ if __name__ == "__main__":  # for running as a standalone python script too!
 
 # %pylab inline
 # pylab.rc("savefig", dpi=120)  # set resolution of inline figures
-
 # The `%pylab` magic imports `matplotlib.pyplot` as `plt` and `numpy` as
 # `np`. We'll also, change the working directory to echidna's base
 # directory, so that all the relative imports work.
@@ -43,12 +44,10 @@ if __name__ == "__main__":  # for running as a standalone python script too!
 # In[ ]:
 
 # %cd ../../..
-
 # In[ ]:
 
 # %%bash
 # pwd
-
 # The `%cd` inline-magic emmulates the bash `cd` command, allowing us to
 # change directory and the `%%bash` magic lets you run any bash command in
 # the cell but remaining in the notebook!
@@ -339,47 +338,52 @@ if __name__ == "__main__":  # for running as a standalone python script too!
 
 # In[ ]:
 
-    def overlay_spectra(original, smeared,
-                        dimension="energy_mc", fig_num=1):
-        """ Overlay original and smeared spectra.
 
-        Args:
-          original (echidna.core.spectra.Spectra): Original spectrum.
-          smeared (echidna.core.spectra.Spectra): Smeared spectrum.
-          dimension (string, optional): Dimension to project onto.
-            Default is "energy_mc".
-          fignum (int, optional): Figure number, if producing multiple
-            figures. Default is 1.
+def overlay_spectra(original, smeared,
+                    dimension="energy_mc", fig_num=1):
+    """ Overlay original and smeared spectra.
 
-        Returns:
-          matplotlib.figure.Figure: Figure showing overlaid spectra.
-        """
-        par = original.get_config().get_par(dimension)
-        # Define array of bin boundarie
-        bins = par.get_bin_boundaries()
-        # Define array of bin centres
-        x = par.get_bin_centres()
-        # Save bin width
-        width = par.get_width()
+    Args:
+      original (echidna.core.spectra.Spectra): Original spectrum.
+      smeared (echidna.core.spectra.Spectra): Smeared spectrum.
+      dimension (string, optional): Dimension to project onto.
+        Default is "energy_mc".
+      fignum (int, optional): Figure number, if producing multiple
+        figures. Default is 1.
 
-        # Create figure and axes
-        fig, ax = plt.subplots(num=fig_num)
+    Returns:
+      matplotlib.figure.Figure: Figure showing overlaid spectra.
+    """
+    par = original.get_config().get_par(dimension)
+    # Define array of bin boundarie
+    bins = par.get_bin_boundaries()
+    # Define array of bin centres
+    x = par.get_bin_centres()
+    # Save bin width
+    width = par.get_width()
 
-        # Overlay two spectra using projection as weight
-        ax.hist(x, bins, weights=original.project(dimension),
-                histtype="stepfilled", color="RoyalBlue",
-                alpha=0.5, label=original._name)
-        ax.hist(x, bins, weights=smeared.project(dimension),
-                histtype="stepfilled", color="Red",
-                alpha=0.5, label=smeared._name)
+    # Create figure and axes
+    fig, ax = plt.subplots(num=fig_num)
 
-        # Add label/style
-        plt.legend(loc="upper right")
-        plt.ylim(ymin=0.0)
-        plt.xlabel(dimension + " [" + par.get_unit() + "]")
-        plt.ylabel("Events per " + str(width) +
-                   " " + par.get_unit() + " bin")
-        return fig
+    # Overlay two spectra using projection as weight
+    ax.hist(x, bins, weights=original.project(dimension),
+            histtype="stepfilled", color="RoyalBlue",
+            alpha=0.5, label=original._name)
+    ax.hist(x, bins, weights=smeared.project(dimension),
+            histtype="stepfilled", color="Red",
+            alpha=0.5, label=smeared._name)
+
+    # Add label/style
+    plt.legend(loc="upper right")
+    plt.ylim(ymin=0.0)
+    plt.xlabel(dimension + " [" + par.get_unit() + "]")
+    plt.ylabel("Events per " + str(width) +
+               " " + par.get_unit() + " bin")
+    return fig
+
+
+if __name__ == "__main__":
+    print ""  # need an indented bock
 
 # In[ ]:
 
