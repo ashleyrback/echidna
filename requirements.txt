@@ -4,3 +4,4 @@ pyyaml==3.11
 matplotlib==1.4.3
 Sphinx==1.3b2
 colorlog==2.6.0
+tqdm==4.8.4

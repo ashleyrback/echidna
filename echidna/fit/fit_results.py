@@ -192,13 +192,10 @@ class LimitResults(FitResults):
         Returns:
           numpy.ndarray: The test statistics array with penalty terms addded.
         """
-        stats = numpy.zeros(self._stats.shape)
-        for i, stat in enumerate(self._stats):
-            stat = numpy.sum(stat)
-            for penalty in self._penalty_terms[i]:
-                stat += penalty
-            stats[i] = stat
-        return stats
+        stat_axes = tuple(numpy.arange(1, len(self._stats.shape)))
+        penalty_axes = tuple(numpy.arange(1, len(self._penalty_terms.shape)))
+        return (numpy.sum(self._stats, axis=stat_axes) +
+                numpy.sum(self._penalty_terms, axis=penalty_axes))
 
     def get_limit_stat(self, i):
         """Gets the test statistic with penalty terms added for the signal

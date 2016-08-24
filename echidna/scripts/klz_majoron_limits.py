@@ -210,8 +210,8 @@ def main(args, name=None, floating_backgrounds=[], signals=[]):
     if args_config.get("fixed") is not None:
         if not isinstance(args_config.get("fixed"), dict):
             raise TypeError(
-                "Expecting dictionary with paths to fixed backgrounds as keys "
-                "and num_decays for each background as values")
+                "Expecting dictionary with paths to fixed backgrounds as "
+                "keys and num_decays for each background as values")
         for filename, num_decays in args_config.get("fixed").iteritems():
             logger.info("Using fixed spectrum: %s (%.4f decays)" %
                         (filename, num_decays))
@@ -284,11 +284,10 @@ def main(args, name=None, floating_backgrounds=[], signals=[]):
 
     # Fit with no signal
     stat_zero = fitter.fit()
-    fit_results = fitter.get_fit_results()
-    logger.info("Calculated stat_zero: %.4f" % numpy.sum(stat_zero))
+    summary = fitter.get_minimiser().get_summary()
+    logger.info("Calculated stat_zero: %.4f" % numpy.sum(stat_zero[0]))
     logger.info("Fit summary:")
-    logging.getLogger("extra").info("\n%s\n" %
-                                    json.dumps(fit_results.get_summary()))
+    logging.getLogger("extra").info("\n%s\n" % json.dumps(summary))
 
     # Load signals
     spectrum_names = [signal.get_name() for signal in signals]
@@ -331,10 +330,29 @@ def main(args, name=None, floating_backgrounds=[], signals=[]):
     # KamLAND-Zen detector info
     klz_detector = constants.klz_detector
 
+    # Create converter
+    converter = decay.DBIsotope(
+        signal._name, klz_detector.get("Xe136_atm_weight"),
+        klz_detector.get("XeEn_atm_weight"),
+        klz_detector.get("Xe136_abundance"),
+        decay.phase_spaces.get(signal._name),
+        decay.matrix_elements.get(signal._name),
+        loading=klz_detector.get("loading"),
+        outer_radius=klz_detector.get("fv_radius"),
+        scint_density=klz_detector.get("scint_density"))
+
+    two_nu_rate = summary.get("Xe136_2n2b_rate").get("best_fit")
+    half_life = converter.counts_to_half_life(
+        two_nu_rate,
+        n_atoms=converter.get_n_atoms(
+            target_mass=klz_detector.get("target_mass")),
+        livetime=klz_detector.get("livetime"))
+    logger.info("Fitted 2nu rate is: %.4g" % half_life)
+
     # Loop through signals and set limit for each
     for signal in signals:
         # Reset GridSearch - with added signal rate parameter
-        fitter.get_fit_results().reset_grids()
+        fitter.get_minimiser().reset_grids()
 
         # Create converter
         converter = decay.DBIsotope(
@@ -349,9 +367,10 @@ def main(args, name=None, floating_backgrounds=[], signals=[]):
         klz_limit = klz_limits.get(signal._name)
 
         # Create limit setter
-        limit_setter = limit.Limit(signal, fitter, per_bin=per_bin)
+        limit_setter = limit.Limit(signal, fitter)
 
-        limit_scaling = limit_setter.get_limit(store_summary=store_summary)
+        limit_scaling = limit_setter.get_limit(
+            store_fits=True, store_spectra=True)
         signal.scale(limit_scaling)
         half_life = converter.counts_to_half_life(
             limit_scaling,

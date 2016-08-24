@@ -1,18 +1,16 @@
 import numpy
 
-from echidna.core.config import GlobalFitConfig
+from echidna.settings import user_profile
 from echidna.fit.fit_results import LimitResults
-from echidna.fit.minimise import GridSearch
-import echidna.output as output
 from echidna.errors.custom_errors import LimitError, CompatibilityError
 from echidna.output import store
 
 import logging
-import collections
 import yaml
 import datetime
 import json
 import copy
+from tqdm import tqdm
 
 
 class Limit(object):
@@ -26,23 +24,26 @@ class Limit(object):
       shrink (bool, optional): If set to True, :meth:`shrink` method is
         called on the signal spectrum before limit setting, shrinking to
         ROI.
+      save_dir (string, optional): Specify directory to save output, e.g.
+        :class:`LimitResults`. Default is to use directory specified in
+        :obj:`echidna.settings.user_profile`.
 
     Attributes:
       _logger (:class:`logging.Logger`): The output logger.
       _fitter (:class:`echidna.limit.fit.Fit`): The fitter used to set a
         a limit with.
-      _signal (:class:`echidna.core.spectra.Spectra`): signal spectrum you wish
-        to obtain a limit for.
+      _signal (:class:`echidna.core.spectra.spectra`): Signal spectrum you
+        wish to obtain a limit for.
       _limit_results (:class:`echidna.fit.fit_results.LimitResults`): Limit
         results instance to report limit fit results
+      _save_dir (string): Directory to save output, e.g. :class:`LimitResults`
     """
-    def __init__(self, signal, fitter, shrink=True, store_all=False):
+    def __init__(self, signal, fitter, shrink=True, save_dir=None):
         self._logger = logging.getLogger(name="Limit")
         self._fitter = fitter
         self._fitter.check_fit_config(signal)
         self._fitter.set_signal(signal, shrink=shrink)
         self._signal = signal
-        parameters = collections.OrderedDict()
         name = signal.get_name() + "_limit_fit_config"
         limit_config = signal.get_fit_config()
         fitter_config = fitter.get_fit_config()
@@ -53,6 +54,9 @@ class Limit(object):
         self._logger.info("Setting limit with the following parameters:")
         logging.getLogger("extra").info(
             yaml.dump(fitter_config.dump(basic=True)))
+        if not save_dir:
+            save_dir = user_profile.get("hdf5_save_path")
+        self._save_dir = save_dir
 
     def get_array_limit(self, array, limit=2.71):
         """ Get the limit from an array containing statisics
@@ -129,30 +133,28 @@ class Limit(object):
             if type(fit_stats) is tuple:
                 fit_stats = fit_stats[0]
             min_stat = copy.copy(fit_stats)
-            self._logger.info("Calculated stat_zero: %s" % min_stat)
+            self._logger.info("Calculated stat_zero: %s" % min_stat.sum())
             fit_results = copy.copy(self._fitter.get_minimiser())
             if fit_results:
                 self._logger.info("Fit summary:")
                 logging.getLogger("extra").info(
                     "\n%s\n" % json.dumps(fit_results.get_summary()))
 
-        # Create summary
-        scales = par.get_values()
-
+        # Create stats array
         if type(min_stat) is numpy.ndarray:
             shape = self._signal.get_fit_config().get_shape() + min_stat.shape
         else:
             shape = self._signal.get_fit_config().get_shape()
         stats = numpy.zeros(shape, dtype=numpy.float64)
-        # Create stats array
         self._logger.debug("Creating stats array with shape %s" % str(shape))
 
         # Loop through signal scalings
         self._logger.debug("Testing signal scalings:\n\n")
         logging.getLogger("extra").debug(str(par.get_values()))
-        for i, scale in enumerate(par.get_values()):
+
+        # Progress bar
+        for i, scale in tqdm(enumerate(par.get_values())):
             self._logger.debug("signal scale: %.4g" % scale)
-#            print "scale", scale
             if not numpy.isclose(scale, 0.):
                 if self._fitter.get_signal() is None:
                     self._fitter.set_signal(self._signal, shrink=False)
@@ -178,21 +180,60 @@ class Limit(object):
                 if store_fits:
                     self._limit_results.set_fit_result(i, fit_results)
 
+        # Set stats in limit_results
+        self._limit_results._stats = stats
+        stats = self._limit_results.get_full_stats()
+
         # Convert stats to delta - subtracting minimum
-        stats -= min_stat
+        if numpy.nanmin(stats) < min_stat.sum():
+            # for sensitivity these should be the same, but when fitting to
+            # data these may differ
+            prev_min_stat = numpy.sum(min_stat)
+            min_stat = numpy.nanmin(stats)
+            self._logger.warning("Updating min_stat based on numpy.nanmin")
+            logging.getLogger("extra").warning(
+                " --> was %.4f now %.4f" % (prev_min_stat, min_stat))
+        stats -= numpy.sum(min_stat)
 
         # Also want to know index of minimum
         min_bin = numpy.argmin(stats)
 
-        self._limit_results._stats = stats
-        stats = self._limit_results.get_full_stats()
+        if store_limit:
+            if limit_fname:
+                if limit_fname[-5:] != '.hdf5':
+                    limit_fname += '.hdf5'
+            else:
+                timestamp = datetime.datetime.now().strftime(
+                    "%Y-%m-%d_%H-%M-%S")
+                fname = (self._limit_results.get_name() +
+                         "_" + timestamp + ".hdf5")
+                limit_fname = self._save_dir + fname
+            store.dump_limit_results(limit_fname, self._limit_results)
+            self._logger.info("Saved summary of %s to file %s" %
+                              (self._limit_results.get_name(),
+                               limit_fname))
+        if store_spectra:
+            fname = self._fitter.get_data()._name + "_data.hdf5"
+            store.dump(self._save_dir + fname, self._fitter.get_data())
+            if self._fitter.get_fixed_background():
+                fname = (self._fitter.get_fixed_background()._name +
+                         "_fixed.hdf5")
+                store.dump(self._save_dir + fname,
+                           self._fitter.get_fixed_background())
+            if self._fitter.get_floating_backgrounds():
+                for background in self._fitter.get_floating_backgrounds():
+                    fname = background._name + "_float.hdf5"
+                    store.dump(self._save_dir + fname, background)
+            fname = self._signal._name + "_signal.hdf5"
+            store.dump(self._save_dir + fname, self._signal)
 
+        log_text = ""
+        log_text += "\n===== Limit Summary ====="
         try:
             # Slice from min_bin upwards
-            log_text = ""
             i_limit = numpy.where(stats[min_bin:] > limit)[0][0]
             limit = par.get_values()[min_bin + i_limit]
-            log_text += "\n===== Limit Summary =====\nLimit found at:\n"
+            log_text += "\nLimit found at:\n"
             log_text += "Signal Decays: %.4g\n" % limit
             for parameter in self._fitter.get_fit_config().get_pars():
                 cur_par = self._fitter.get_fit_config().get_par(parameter)
@@ -200,10 +241,12 @@ class Limit(object):
                 log_text += ("Best fit: %4g\n" %
                              self._limit_results.get_best_fit(i_limit,
                                                               parameter))
-                log_text += ("Prior: %.4g\n" %
-                             cur_par.get_prior())
-                log_text += ("Sigma: %.4g\n" %
-                             cur_par.get_sigma())
+                if cur_par.get_prior():
+                    log_text += ("Prior: %.4g\n" %
+                                 cur_par.get_prior())
+                if cur_par.get_sigma():
+                    log_text += ("Sigma: %.4g\n" %
+                                 cur_par.get_sigma())
                 log_text += ("Penalty term: %.4g\n" %
                              self._limit_results.get_penalty_term(i_limit,
                                                                   parameter))
@@ -211,50 +254,12 @@ class Limit(object):
             log_text += "Test statistic: %.4f\n" % numpy.sum(stats[i_limit])
             log_text += "N.D.F.: 1\n"  # Only fit one dof currently
             logging.getLogger("extra").info("\n%s\n" % log_text)
-
-            if store_limit:
-                if limit_fname:
-                    if limit_fname[-5:] != '.hdf5':
-                        limit_fname += '.hdf5'
-                else:
-                    timestamp = datetime.datetime.now().strftime(
-                        "%Y-%m-%d_%H-%M-%S")
-                    path = output.__default_save_path__ + "/"
-                    fname = (self._limit_results.get_name() + "_" + timestamp +
-                             ".hdf5")
-                    limit_fname = path + fname
-                store.dump_limit_results(limit_fname, self._limit_results)
-                self._logger.info("Saved summary of %s to file %s" %
-                                  (self._limit_results.get_name(),
-                                   limit_fname))
-            if store_spectra:
-                path = output.__default_save_path__ + "/"
-                fname = self._fitter.get_data()._name + "_data.hdf5"
-                store.dump(path + fname, self._fitter.get_data(),
-                           append=True, group_name="data")
-                if self._fitter.get_fixed_background():
-                    fname = (self._fitter.get_fixed_background()._name +
-                             "_fixed.hdf5")
-                    store.dump(path + fname,
-                               self._fitter.get_fixed_background(),
-                               append=True, group_name="fixed")
-                if self._fitter.get_floating_backgrounds():
-                    for background in self._fitter.get_floating_backgrounds():
-                        fname = background._name + "_float.hdf5"
-                        store.dump(path + fname, background, append=True,
-                                   group_name=background.get_name())
-                fname = self._signal._name + "_signal.hdf5"
-                store.dump(path + fname, self._signal, append=True,
-                           group_name="signal")
-
             return limit
-
-        except IndexError as detail:
+        except IndexError:
             # Slice from min_bin upwards
-            log_text = ""
             i_limit = numpy.argmax(stats[min_bin:])
             limit = par.get_values()[min_bin + i_limit]
-            log_text += "\n===== Limit Summary =====\nNo limit found:\n"
+            log_text += "\nNo limit found:\n"
             log_text += "Signal Decays (at max stat): %.4g\n" % limit
             for parameter in self._fitter.get_fit_config().get_pars():
                 cur_par = self._fitter.get_fit_config().get_par(parameter)
@@ -262,40 +267,19 @@ class Limit(object):
                 log_text += ("Best fit: %4g\n" %
                              self._limit_results.get_best_fit(i_limit,
                                                               parameter))
-                log_text += ("Prior: %.4g\n" % cur_par.get_prior())
-                log_text += ("Sigma: %.4g\n" % cur_par.get_sigma())
+                if cur_par.get_prior():
+                    log_text += ("Prior: %.4g\n" %
+                                 cur_par.get_prior())
+                if cur_par.get_sigma():
+                    log_text += ("Sigma: %.4g\n" %
+                                 cur_par.get_sigma())
                 log_text += ("Penalty term: %.4g\n" %
                              self._limit_results.get_penalty_term(i_limit,
                                                                   parameter))
             log_text += "----------------------------\n"
             log_text += "Test statistic: %.4f\n" % numpy.sum(stats[i_limit])
             log_text += "N.D.F.: 1\n"  # Only fit one dof currently
-            logging.getLogger("extra").info("\n%s" % log_text)
-
-            if store_limit:
-                timestamp = datetime.datetime.now().strftime(
-                    "%Y-%m-%d_%H-%M-%S")
-                path = output.__default_save_path__ + "/"
-                fname = (self._limit_results.get_name() + "_" + timestamp +
-                         ".hdf5")
-                store.dump_limit_results(path + fname, self._limit_results)
-                self._logger.info("Saved summary of %s to file %s" %
-                                  (self._limit_results.get_name(),
-                                   path + fname))
-            if store_spectra:
-                store.dump(path + fname, self._fitter.get_data(),
-                           append=True, group_name="data")
-                if self._fitter.get_fixed_background():
-                    store.dump(path + fname,
-                               self._fitter.get_fixed_background(),
-                               append=True, group_name="fixed")
-                if self._fitter.get_floating_backgrounds():
-                    for background in self._fitter.get_floating_backgrounds():
-                        store.dump(path + fname, background, append=True,
-                                   group_name=background.get_name())
-                store.dump(path + fname, self._signal, append=True,
-                           group_name="signal")
-            self._logger.error("Recieived: IndexError: %s" % detail)
+            logging.getLogger("extra").info("\n%s\n" % log_text)
             raise LimitError("Unable to find limit. Max stat: %s, Limit: %s"
                              % (stats.max(), limit))
 

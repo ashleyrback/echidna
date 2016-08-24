@@ -1,10 +1,7 @@
-import numpy
-
 from echidna.core.spectra import Spectra
 from echidna.core.config import (SpectraConfig, SpectraParameter,
                                  SpectraFitConfig, GlobalFitConfig)
-from echidna.limit.summary import Summary, ReducedSummary
-from echidna.fit.fit_results import FitResults, LimitResults
+from echidna.fit.fit_results import LimitResults
 from echidna.fit.minimise import GridSearch
 
 from collections import OrderedDict
@@ -19,74 +16,22 @@ import copy
 _logger = logging.getLogger("store")
 
 
-def dict_to_string(in_dict):
-    """ *** DEPRECIATED ***
-    Converts a dicionary to a string so it can be saved in a hdf5 file.
-
-    Args:
-      in_dict (dict): Dictionary to convert.
-
-    Raises:
-      TypeError: If the type of a value of in_dict is not supported currently.
-        Supported types are string, float and int.
-
-    Returns:
-      string: The converted dictionary.
-    """
-    out_string = ""
-    for key, value in in_dict.iteritems():
-        out_string += key+":"+str(value)+";"
-        if type(value) is str:
-            out_string += "str,"
-        elif type(value) is float:
-            out_string += "float,"
-        elif type(value) is int:
-            out_string += "int,"
-        else:
-            raise TypeError("%s has the unsupported type %s" % (value,
-                                                                type(value)))
-    return out_string[:-1]
-
-
-def string_to_dict(in_string):
-    """ *** DEPRECIATED ***
-    Converts a string to a dictionary so it can be loaded from the hdf5 file.
-
-    Args:
-      in_string (string): The string to convert into a dictionary.
-
-    Raises:
-      TypeError: If the type of a value of in_dict is not supported currently.
-        Supported types are string, float and int.
-
-    Returns:
-      dict: The converted string.
-    """
-    out_dict = {}
-    keys_values = in_string.split(',')
-    for entry in keys_values:
-        key = entry.split(":")[0]
-        value = entry.split(":")[1].split(";")[0]
-        typ = entry.split(";")[1]
-        if typ == "str":
-            out_dict[key] = value
-        elif typ == "int":
-            out_dict[key] = int(value)
-        elif typ == "float":
-            out_dict[key] = float(value)
-        else:
-            raise TypeError("%s has the unsupported type %s" % (value, typ))
-    return out_dict
-
-
-def dump(file_path, spectrum, append=False, overwrite=False):
+def dump(file_path, spectrum, group_name="spectrum",
+         append=False, overwrite=False):
     """ Dump the spectrum to the file_path.
 
     Args:
       file_path (string): Location to save to.
-      spectrum (:class:`spectra.Spectra`): The spectrum to save
+      spectrum (:class:`Spectra`): The spectrum to save
+      group_name (string, optional): Name of HDF5 group to save to.
+        Default is to save to "spectrum" group but allowing users to
+        specify different groups means you can save multiple spectra to
+        a single file - e.g. all spectra for a spectral plot.
+      append (bool, optional): If True, opens file in append mode.
+        Required in order to add additional groups.
+      overwrite (bool, optional): If True, overwrites the contents of
+        a group, if it already exists in the file
     """
-    group_name = "spectrum"
     if append:
         file_opt = "a"
     else:
@@ -148,16 +93,21 @@ def dump_ndarray(file_path, ndarray_object):
     _logger.info("Saved %s to %s" % (str(ndarray_object), file_path))
 
 
-def dump_fit_results(file_path, fit_results, append=False):
+def dump_fit_results(file_path, fit_results,
+                     group_name="fit_results", append=False):
     """ Dump the fit results to the specified file_path.
 
     Args:
       file_path (string): Location to save to.
       summary (:class:`echdina.fit.fit_results.FitResults`): The
         FitResults to save.
-      append (bool, optional): Append to existing hdf5 file.
+      group_name (string, optional): Name of HDF5 group to save to.
+        Default is to save to "spectrum" group but allowing users to
+        specify different groups means you can save multiple spectra to
+        a single file - e.g. all spectra for a spectral plot.
+      append (bool, optional): If True, opens file in append mode.
+        Required in order to add additional groups.
     """
-    group_name = "fit_results"
     if append:
         file_opt = "a"
     else:
@@ -183,16 +133,21 @@ def dump_fit_results(file_path, fit_results, append=False):
                  (fit_results.get_name(), file_path))
 
 
-def dump_limit_results(file_path, limit_results, append=False):
+def dump_limit_results(file_path, limit_results,
+                       group_name="limit_results", append=False):
     """ Dump the limit results to the specified file_path.
 
     Args:
       file_path (string): Location to save to.
       limit_results (:class:`echdina.fit.fit_results.LimitResults`): The
         LimitResults to save.
-      append (bool, optional): Append to existing hdf5 file.
+      group_name (string, optional): Name of HDF5 group to save to.
+        Default is to save to "spectrum" group but allowing users to
+        specify different groups means you can save multiple spectra to
+        a single file - e.g. all spectra for a spectral plot.
+      append (bool, optional): If True, opens file in append mode.
+        Required in order to add additional groups.
     """
-    group_name = "limit_results"
     if append:
         file_opt = "a"
     else:
@@ -243,16 +198,19 @@ def dump_limit_results(file_path, limit_results, append=False):
                  (limit_results.get_name(), file_path))
 
 
-def load(file_path):
+def load(file_path, group_name="spectrum"):
     """ Load a spectrum from file_path.
 
     Args:
       file_path (string): Location to save to.
+      group_name (string, optional): Name of HDF5 group to load from.
+        Default is to load from "spectrum" group but you will need to
+        specify different groups if you have saved multiple spectra to
+        a single file - e.g. all spectra for a spectral plot.
 
     Returns:
       Loaded spectrum (:class:`spectra.Spectra`).
     """
-    group_name = "spectrum"
     try:
         with h5py.File(file_path, "r") as file_:
             group = file_[group_name]
@@ -306,7 +264,8 @@ def load(file_path):
         return spec
     except KeyError as detail:
         _logger.warning("Recieved KeyError: %s" % detail)
-        logging.getLogger("extra").warning(" --> attempting to load old-style")
+        logging.getLogger("extra").warning(
+            " --> attempting to load old-style")
         return _load_old(file_path)
 
 
@@ -369,11 +328,15 @@ def load_ndarray(file_path, ndarray_object):
     return ndarray_object
 
 
-def load_fit_results(file_path):
+def load_fit_results(file_path, group_name="fit_results"):
     """ Load a :class:`FitResults` object from file.
 
     Args:
       file_path (string): Location from which to load :class:`FitResults`.
+      group_name (string, optional): Name of HDF5 group to load from.
+        Default is to load from "spectrum" group but you will need to
+        specify different groups if you have saved multiple spectra to
+        a single file - e.g. all spectra for a spectral plot.
 
     Raises:
       ValueError: If stats shape is not equal to fit_config shape and/or
@@ -382,7 +345,6 @@ def load_fit_results(file_path):
     Returns:
       :class:`FitResults`: The loaded fit results object.
     """
-    group_name = "fit_results"
     with h5py.File(file_path, "r") as file_:
         group = file_[group_name]
 
@@ -420,16 +382,19 @@ def load_fit_results(file_path):
     return fit_results
 
 
-def load_limit_results(file_path):
+def load_limit_results(file_path, group_name="limit_results"):
     """ Load a :class:`LimitResults` object from file.
 
     Args:
       file_path (string): Location from which to load :class:`FitResults`.
+      group_name (string, optional): Name of HDF5 group to load from.
+        Default is to load from "spectrum" group but you will need to
+        specify different groups if you have saved multiple spectra to
+        a single file - e.g. all spectra for a spectral plot.
 
     Returns:
       :class:`FitResults`: The loaded fit results object.
     """
-    group_name = "limit_results"
     with h5py.File(file_path, "r") as file_:
         group = file_[group_name]
         name = group.attrs["name"]

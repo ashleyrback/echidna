@@ -55,7 +55,7 @@ class Fit(object):
       _checked
       _roi (dictionary): Region Of Interest you want to fit in. The format of
         roi is e.g. {"energy": (2.4, 2.6), "radial3": (0., 0.2)}
-      _test_statistic (:class:`echidna.limit.test_statistic.TestStatistic`): An
+      _test_statistic (:class:`echidna.fit.test_statistic.TestStatistic`): An
         appropriate class for calculating test statistics.
       _fit_config (:class:`FitConfig`): Config class for fit -
         usually loaded from file.
@@ -78,7 +78,8 @@ class Fit(object):
     def __init__(self, roi, test_statistic, fit_config=None, data=None,
                  fixed_backgrounds=None, floating_backgrounds=None,
                  signal=None, shrink=True, per_bin=False, minimiser=None,
-                 use_pre_made=False, pre_made_base_dir=None, single_bin=False):
+                 use_pre_made=False, pre_made_base_dir=None,
+                 single_bin=False):
         self._logger = logging.getLogger("Fit")
         self._checked = False
         self.set_roi(roi)
@@ -112,9 +113,9 @@ class Fit(object):
         else:  # Set both as None for now
             self._floating_backgrounds = None
             self._floating_pars = None
-            self._logger.warning("No floating background has been set. Either "
-                                 "fixed background or at least one floating "
-                                 "is required to run the fit.")
+            self._logger.warning("No floating background has been set. "
+                                 "Either fixed background or at least one "
+                                 "floating background is required")
 
         self._global_dict = {}
 
@@ -398,8 +399,8 @@ class Fit(object):
         """ Get the parameters of a spectra that contain the roi.
 
         Args:
-          :class:`echidna.core.spectra.Spectra`: The spectra you want to obtain
-            the roi parameters for.
+          :class:`echidna.core.spectra.Spectra`: The spectra you want to
+            obtain the roi parameters for.
 
         Returns:
           list: Of the names of the spectra parameters which contain the roi.
@@ -649,6 +650,7 @@ class Fit(object):
                 spectrum.scale(scaling)
                 total_spectrum = spectrum
                 total_spectrum._name = "Fixed Background"
+                total_spectrum.set_background_name("Fixed Background")
             else:
                 if shrink:
                     self.shrink_spectra(spectrum)
@@ -725,8 +727,9 @@ class Fit(object):
         """
         floating_pars = []
         for background in floating_backgrounds:
-            self._logger.debug("Adding Spectra with name %s to"
-                               "_floating_backgrounds" % background.get_name())
+            self._logger.debug(
+                "Adding Spectra with name %s to "
+                "_floating_backgrounds" % background.get_name())
             if background.get_fit_config():
                 self.check_fit_config(background)
                 # Spectrum has a valid fit config, add to GlobalFit Config
@@ -749,7 +752,7 @@ class Fit(object):
         Raises:
           IndexError: If fit config contains no parameters.
         """
-        self.check_all_spectra()  # All spectra should be set and checked first
+        self.check_all_spectra()  # all spectra must be set and checked first
         if minimiser:
             self._minimiser = minimiser
             self._logger.debug("Setting %s as minimiser" %
