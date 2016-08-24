@@ -49,7 +49,7 @@ class Shift(object):
             return self.shift_by_bin(spectrum, dimension)
         preshift_sum = spectrum.sum()
         interpolation = spectrum.interpolate1d(dimension, **kwargs)
-        shifted_spec = copy.copy(spectrum)
+        shifted_spec = copy.deepcopy(spectrum)
         shifted_spec._name = spectrum._name + "_shift" + str(shift)
         shifted_spec._data = numpy.zeros(spectrum._data.shape)
         n_dim = len(spectrum._data.shape)
@@ -57,7 +57,7 @@ class Shift(object):
         par = spectrum.get_config().get_par(dimension)
         low = par._low
         high = par._high
-        n_bins = par._bins
+        n_bins = int(par._bins)
         for bin in range(n_bins):
             x = low + (bin + 0.5) * step
             current = x - shift
@@ -184,14 +184,16 @@ class Shift(object):
         if not numpy.isclose(shift % step, 0.):
             raise ValueError("Shift (%s) must be a multiple of bin width (%s)"
                              % (shift, step))
-        shifted_spec = copy.copy(spectrum)
+        shifted_spec = copy.deepcopy(spectrum)
         shifted_spec._name = spectrum._name + "_shift" + str(shift)
+        if shift == 0.:
+            return shifted_spec
         shifted_spec._data = numpy.zeros(spectrum._data.shape)
         n_dim = len(spectrum._data.shape)
         axis = spectrum.get_config().get_index(dimension)
         low = spectrum.get_config().get_par(dimension)._low
         high = spectrum.get_config().get_par(dimension)._high
-        n_bins = spectrum.get_config().get_par(dimension)._bins
+        n_bins = int(spectrum.get_config().get_par(dimension)._bins)
         for bin in range(n_bins):
             x = low + (bin + 0.5) * step
             if (x - shift) < low or (x - shift) > high:

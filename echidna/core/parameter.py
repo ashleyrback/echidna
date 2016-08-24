@@ -171,6 +171,7 @@ class FitParameter(Parameter):
       logscale_deviation (bool, optional): Flag to create a logscale deviation
         array of values rather than a linear or logscale array.
 
+
     Attributes:
       _prior (float): The prior of the parameter
       _sigma (float): The sigma of the parameter
@@ -180,6 +181,7 @@ class FitParameter(Parameter):
         test in fit.
       _best_fit (float): Best-fit value calculated by fit.
       _penalty_term (float): Penalty term value at best fit.
+      _pre_made (bool): Loads pre made spectra if set to True.
       _logscale (bool): Flag to create an logscale array of values,
         rather than a linear array.
       _base (float): Base to use when creating an logscale array.
@@ -192,8 +194,9 @@ class FitParameter(Parameter):
     """
 
     def __init__(self, name, prior, sigma, low, high, bins, dimension=None,
-                 values=None, current_value=None, penalty_term=None,
-                 best_fit=None, logscale=None, base=numpy.e,
+                 values=None, step=None, current_value=None,
+                 penalty_term=None, best_fit=None, best_fit_err=0.,
+                 pre_made=False, logscale=None, base=numpy.e,
                  logscale_deviation=None):
         """Initialise FitParameter class
         """
@@ -205,11 +208,14 @@ class FitParameter(Parameter):
                 "Setting sigma explicitly as None for %s - "
                 "No penalty term will be added for this parameter!" % name)
         self._sigma = sigma
+        self._step = step
         self._dimension = dimension
         self._values = values
         self._current_value = current_value
         self._best_fit = best_fit
+        self._best_fit_err = best_fit_err
         self._penalty_term = penalty_term
+        self._pre_made = pre_made
         self._logscale = None
         self._base = None
         self._logscale_deviation = None
@@ -301,6 +307,14 @@ class FitParameter(Parameter):
             raise ValueError("Best fit value for parameter" +
                              self._name + " has not been set")
         return self._best_fit
+
+    def get_best_fit_err(self):
+        """
+        Returns:
+          float: Error on best fit value of parameter - stored in
+            :attr:`_best_fit_err`.
+        """
+        return self._best_fit_err
 
     def get_bin(self, value):
         """ Get bin for value of parameter.
@@ -525,6 +539,14 @@ class FitParameter(Parameter):
         """
         self._best_fit = best_fit
 
+    def set_best_fit_err(self, best_fit_err):
+        """ Set value for :attr:`_best_fit_err`.
+
+        Args:
+          best_fit_err (float): Error on best fit value for parameter
+        """
+        self._best_fit_err = best_fit_err
+
     def set_current_value(self, value):
         """ Set value for :attr:`_current_value`.
 
@@ -630,6 +652,7 @@ class FitParameter(Parameter):
         # Add non-basic attributes
         parameter_dict["current_value"] = self._current_value
         parameter_dict["best_fit"] = self._best_fit
+        parameter_dict["best_fit_err"] = self._best_fit_err
         parameter_dict["penalty_term"] = self._best_fit
         return parameter_dict
 
@@ -706,11 +729,13 @@ class ResolutionParameter(FitParameter):
         super(ResolutionParameter, self).__init__(
             name, prior, sigma, low, high, bins, dimension, **kwargs)
 
-    def apply_to(self, spectrum):
+    def apply_to(self, spectra, res_key):
         """ Smears spectrum to current value of resolution.
 
         Args:
           spectrum (:class:`Spectra`): Spectrum which should be smeared.
+          res_key (str): The string which denotes the type of resolution par
+            e.g. 'ly' for light yield.
 
         Returns:
           (:class:`Spectra`): Smeared spectrum.
@@ -721,16 +746,13 @@ class ResolutionParameter(FitParameter):
         if self._current_value is None:
             raise ValueError("Current value of rate parameter %s "
                              "has not been set" % self._name)
-        cur_value = self._current_value
-        if cur_value > 10.:
-            smearer = smear.EnergySmearLY()
-        else:
-            smearer = smear.EnergySmearRes()
-        smearer.set_resolution(self._current_value)
-        spectrum = smearer.weighted_smear(spectrum, self._dimension)
+        smearer = smear.EnergySmearLY()
+        spectrum = smearer.interpolate(spectra, res_key, self._current_value,
+                                       3)
         return spectrum
 
-    def get_pre_convolved(self, directory, filename, added_dim=False):
+    def get_pre_convolved(self, directory, filename, added_dim=False,
+                          cur_val=None):
         """ Constructs the filename and directory from which a pre_convolved
           spectrum can be loaded from.
 
@@ -757,6 +779,8 @@ class ResolutionParameter(FitParameter):
             object
           added_dim (bool, optional): If a dimension has just been added to the
             directory then this flag is True.
+          cur_val (float, optional): Overwrites the current value stored in 
+            :attr:`_current_value`.
 
         Returns:
           string: Directory containing pre-convolved :class:`Spectra`,
@@ -767,9 +791,11 @@ class ResolutionParameter(FitParameter):
         Raises:
           ValueError: If :attr:`_current_value` is not set.
         """
-        if self._current_value is None:
+        if self._current_value is None and cur_val is None:
             raise ValueError("Current value of fit parameter %s "
                              "has not been set" % self._name)
+        if cur_val is None:
+            cur_val = self._current_value
 
         if directory[-1] != '/':
             directory += '/'
@@ -781,13 +807,14 @@ class ResolutionParameter(FitParameter):
                 directory += 'smear/'
         else:
             directory += 'smear/'
-        if self._current_value > 10.:
+        if cur_val > 10.:
             ext = 'ly'
         else:
             ext = 'rs'
-        value_string = str(self._current_value)
+        value_string = str(cur_val)
         # Strip trailling zero in filename
-        value_string = value_string.rstrip('0').rstrip('.')
+        if '.' in value_string:
+            value_string = value_string.rstrip('0').rstrip('.')
         filename_list = filename.split('_')
         temp_fname = ''
         subbed = False
@@ -848,7 +875,8 @@ class ScaleParameter(FitParameter):
         scaler.set_scale_factor(self._current_value)
         return scaler.scale(spectrum, self._dimension)
 
-    def get_pre_convolved(self, directory, filename, added_dim=False):
+    def get_pre_convolved(self, directory, filename, added_dim=False,
+                          cur_val=None):
         """ Constructs the filename and directory from which a pre_convolved
           spectrum can be loaded from.
 
@@ -881,14 +909,17 @@ class ScaleParameter(FitParameter):
             appended with name of this :class:`FitParameter`
           string: Name of pre-convolved :class:`Spectra`, appended with
             current value of this :class:`FitParameter`
+          cur_val (float, optional): Overwrites the current value stored in 
+            :attr:`_current_value`.
 
         Raises:
           ValueError: If :attr:`_current_value` is not set.
         """
-        if self._current_value is None:
+        if self._current_value is None and cur_val is None:
             raise ValueError("Current value of fit parameter %s "
                              "has not been set" % self._name)
-
+        if cur_val is None:
+            cur_val = self._current_value
         if directory[-1] != '/':
             directory += '/'
         if not added_dim:
@@ -899,9 +930,10 @@ class ScaleParameter(FitParameter):
                 directory += 'scale/'
         else:
             directory += 'scale/'
-        value_string = str(self._current_value)
+        value_string = str(cur_val)
         # Strip trailling zero in filename
-        value_string = value_string.rstrip('0').rstrip('.')
+        if '.' in value_string:
+            value_string = value_string.rstrip('0').rstrip('.')
         filename_list = filename.split('_')
         temp_fname = ''
         subbed = False
@@ -962,7 +994,8 @@ class ShiftParameter(FitParameter):
         shifter.set_shift(self._current_value)
         return shifter.shift(spectrum, self._dimension)
 
-    def get_pre_convolved(self, directory, filename, added_dim=False):
+    def get_pre_convolved(self, directory, filename, added_dim=False,
+                          cur_val=None):
         """ Constructs the filename and directory from which a pre_convolved
           spectrum can be loaded from.
 
@@ -989,6 +1022,8 @@ class ShiftParameter(FitParameter):
             object
           added_dim (bool, optional): If a dimension has just been added to the
             directory then this flag is True.
+          cur_val (float, optional): Overwrites the current value stored in 
+            :attr:`_current_value`.
 
         Returns:
           string: Directory containing pre-convolved :class:`Spectra`,
@@ -999,10 +1034,11 @@ class ShiftParameter(FitParameter):
         Raises:
           ValueError: If :attr:`_current_value` is not set.
         """
-        if self._current_value is None:
+        if self._current_value is None and cur_val is None:
             raise ValueError("Current value of fit parameter %s "
                              "has not been set" % self._name)
-
+        if cur_val is None:
+            cur_val = self._current_value
         if directory[-1] != '/':
             directory += '/'
         if not added_dim:
@@ -1013,9 +1049,10 @@ class ShiftParameter(FitParameter):
                 directory += 'shift/'
         else:
             directory += 'shift/'
-        value_string = str(self._current_value)
+        value_string = str(cur_val)
         # Strip trailling zero in filename
-        value_string = value_string.rstrip('0').rstrip('.')
+        if '.' in value_string:
+            value_string = value_string.rstrip('0').rstrip('.')
         filename_list = filename.split('_')
         temp_fname = ''
         subbed = False

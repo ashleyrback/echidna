@@ -1,11 +1,15 @@
 import numpy
 
 from echidna.settings import user_profile
+from echidna.core.config import GlobalFitConfig
 from echidna.fit.fit_results import LimitResults
+from echidna.fit.minimise import GridSearch
+import echidna.output as output
 from echidna.errors.custom_errors import LimitError, CompatibilityError
 from echidna.output import store
 
 import logging
+import collections
 import yaml
 import datetime
 import json
@@ -21,9 +25,13 @@ class Limit(object):
         to obtain a limit for.
       fitter (:class:`echidna.limit.fit.Fit`): The fitter used to set a
         a limit with.
+      signal_config (:class:`echidna.core.config.Config`, optional): If None
+        then the config from the signal arg is used.
       shrink (bool, optional): If set to True, :meth:`shrink` method is
         called on the signal spectrum before limit setting, shrinking to
         ROI.
+      store_all (bool, optional): If set to True, all fit results for all
+        signal scales are stored.
       save_dir (string, optional): Specify directory to save output, e.g.
         :class:`LimitResults`. Default is to use directory specified in
         :obj:`echidna.settings.user_profile`.
@@ -32,13 +40,14 @@ class Limit(object):
       _logger (:class:`logging.Logger`): The output logger.
       _fitter (:class:`echidna.limit.fit.Fit`): The fitter used to set a
         a limit with.
-      _signal (:class:`echidna.core.spectra.spectra`): Signal spectrum you
-        wish to obtain a limit for.
+      _signal (:class:`echidna.core.spectra.Spectra`): Signal spectrum you wish
+        to obtain a limit for.
       _limit_results (:class:`echidna.fit.fit_results.LimitResults`): Limit
         results instance to report limit fit results
       _save_dir (string): Directory to save output, e.g. :class:`LimitResults`
     """
-    def __init__(self, signal, fitter, shrink=True, save_dir=None):
+    def __init__(self, signal, fitter, signal_config=None,
+                 shrink=True, store_all=False, save_dir=None):
         self._logger = logging.getLogger(name="Limit")
         self._fitter = fitter
         self._fitter.check_fit_config(signal)
@@ -133,8 +142,8 @@ class Limit(object):
             if type(fit_stats) is tuple:
                 fit_stats = fit_stats[0]
             min_stat = copy.copy(fit_stats)
-            self._logger.info("Calculated stat_zero: %s" % min_stat.sum())
-            fit_results = copy.copy(self._fitter.get_minimiser())
+            self._logger.info("Calculated stat_zero: %s" % min_stat)
+            fit_results = copy.deepcopy(self._fitter.get_minimiser())
             if fit_results:
                 self._logger.info("Fit summary:")
                 logging.getLogger("extra").info(
@@ -169,12 +178,14 @@ class Limit(object):
                 fit_stats = fit_stats[0]
             stats[i] = fit_stats
 
-            fit_results = copy.copy(self._fitter.get_minimiser())
+            fit_results = copy.deepcopy(self._fitter.get_minimiser())
             if fit_results:
                 results_summary = fit_results.get_summary()
                 for par_name, value in results_summary.iteritems():
                     self._limit_results.set_best_fit(i, value.get("best_fit"),
                                                      par_name)
+                    self._limit_results.set_best_fit_err(
+                        i, value.get("best_fit_err"), par_name)
                     self._limit_results.set_penalty_term(
                         i, value.get("penalty_term"), par_name)
                 if store_fits:

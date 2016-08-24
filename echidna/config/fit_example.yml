@@ -6,15 +6,21 @@ global_fit_parameters:
                         low: 175.
                         high: 225.
                         bins: 100
+                        step: 5.
+                        pre_made: True
                 scale:
                         prior: 1.
                         sigma: 0.01
                         low: 0.9
                         high: 1.1
                         bins: 100
+                        step: 0.03
+                        pre_made: False
                 shift:
                         prior: 0.
                         sigma: 0.01
                         low: -0.1
                         high: 0.1
                         bins: 100
+                        step: 0.04
+                        pre_made: False

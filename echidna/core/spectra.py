@@ -136,6 +136,11 @@ class Spectra(object):
         self._data += spectrum._data
         self._raw_events += spectrum._raw_events
         self._num_decays += spectrum._num_decays
+        if hasattr(self, '_orig_num_decays'):
+            if hasattr(spectrum, '_orig_num_decays'):
+                self._orig_num_decays += spectrum._orig_num_decays
+        elif hasattr(spectrum, '_orig_num_decays'):
+            self._orig_num_decays = spectrum._orig_num_decays
 
     def cut(self, **kwargs):
         """ Similar to :meth:`shrink`, but updates scaling information.
@@ -387,6 +392,9 @@ class Spectra(object):
         Args:
           num_decays (float): Number of decays this spectra should represent.
         """
+        if self._data.sum() == 0.:
+            self._num_decays = float(num_decays)
+            return
         self._data = numpy.multiply(self._data, num_decays / self._num_decays)
         # Make sure self._num_decays stays as a float
         self._num_decays = float(num_decays)
@@ -534,6 +542,26 @@ class Spectra(object):
             cmd += low+":"+high+","
         cmd = cmd[:-1]+"]"
         self._data = eval(cmd)
+
+    def shrink_to_self(self, spectra):
+        """ Shrinks the spectra used in the fit to the data.
+
+        Args:
+          spectra (:class:`echidna.core.spectra.Spectra`): Spectra you want to
+            shrink to the current spectra.
+        """
+        shrink = {}
+        for par_name in self.get_config().get_pars():
+            par = self.get_config().get_par(par_name)
+            low = par._low
+            high = par._high
+            dim = self.get_config().get_dim(par_name)
+            dim_type = spectra.get_config().get_dim_type(dim)
+            par_low = dim + "_" + dim_type + "_low"
+            par_high = dim + "_" + dim_type + "_high"
+            shrink[par_low] = low
+            shrink[par_high] = high
+        spectra.shrink(**shrink)
 
     def shrink_to_roi(self, lower_limit, upper_limit, dimension):
         """ Shrink spectrum to a defined Region of Interest (ROI)

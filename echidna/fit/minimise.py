@@ -6,6 +6,10 @@ from echidna.fit.fit_results import FitResults
 
 import copy
 import abc
+from ROOT import TMinuit, Long, Double
+from array import array
+
+ncount = 0
 
 
 class Minimiser(object):
@@ -691,3 +695,88 @@ class GridSearch(FitResults, Minimiser):
                     yield values, indices
         else:
             yield values, indices
+
+
+class Minuit(FitResults, Minimiser):
+    """ Uses ROOTs TMinuit minimiser
+    """
+    def __init__(self, fit_config, spectra_config, name=None, print_level=-1,
+                 strategy=1, iterations=5000):
+        super(Minuit, self).__init__(fit_config, spectra_config, name=name)
+        Minimiser.__init__(self, name, Minuit, per_bin=False)
+        self._results = None
+        self._print_level = print_level
+        self._strategy = strategy
+        self._iterations = iterations
+
+    def minimise(self, funct, test_statistic):
+        """ Method to perform the minimisation.
+
+        Args:
+          funct (callable): Callable function to calculate the value
+            of the test statistic you wish to minimise, for each
+            combination of parameter values tested. The function must
+            only accept, as arguments, a variable-sized array of
+            parameter values. E.g. ``def funct(*args)``. Within the
+            echidna framework, the :meth:`echidna.limit.fit.Fit.funct`
+            method is the recommened callable to use here.
+          test_statistic (:class:`echidna.limit.test_statistic`): The
+            test_statistic object used to calcualte the test statistics.
+
+        Returns:
+          float: Minimum value found during minimisation.
+        """
+        npar = len(self._fit_config.get_pars())
+        minuit = TMinuit(npar)
+        minuit.SetFCN(funct)
+        minuit.SetPrintLevel(self._print_level)
+        ierflg = Long(0)
+        arglist = array('d', 10*[0.])
+        for i, par_name in enumerate(self._fit_config.get_pars()):
+            par = self._fit_config.get_par(par_name)
+            prior = array('d', [par._prior])
+            step = array('d', [par._step])
+            low = array('d', [par._low])
+            high = array('d', [par._high])
+            minuit.mnparm(i, par_name, prior[0], step[0], low[0], high[0],
+                          ierflg)
+        minuit.mnexcm("SET NOW", arglist, 1, ierflg)
+        # 1 = chisq 0.5 = neg log likelihood
+        minuit.SetErrorDef(1)
+        # Strategy: 1 = standard 2 = improve minimum (slower)
+        arglist[0] = self._strategy
+        minuit.mnexcm("SET STR", arglist, 1, ierflg)
+        # Iterations
+        arglist[0] = self._iterations
+        minuit.mnexcm("MIGRAD", arglist, 1, ierflg)
+        minuit.Migrad()
+        minuit.mnmnos()
+        self._results = minuit
+        for i, par_name in enumerate(self._fit_config.get_pars()):
+            par = self._fit_config.get_par(par_name)
+            sigma = par.get_sigma()
+            prior = par.get_prior()
+            best_fit = Double(0.)
+            best_fit_err = Double(0.)
+            minuit.GetParameter(i, best_fit, best_fit_err)
+            best_fit = float(best_fit)
+            best_fit_err = float(best_fit_err)
+            print par_name, best_fit, "+/-", best_fit_err
+            par.set_best_fit(best_fit)
+            par.set_best_fit_err(best_fit_err)
+            if sigma is not None:
+                par.set_penalty_term(test_statistic.get_penalty_term(best_fit,
+                                                                     prior,
+                                                                     sigma))
+            else:  # penalty term = 0
+                par.set_penalty_term(0.)
+        func_min = Double(0.)
+        est_dist_to_min = Double(0.)
+        err_def = Double(0.)
+        npar_var = Long(0)
+        nfix_par_max = Long(0)
+        status = Long(0)
+        minuit.mnstat(func_min, est_dist_to_min, err_def, npar_var,
+                      nfix_par_max, status)
+        print "min:", float(func_min)
+        return float(func_min)

@@ -9,3 +9,9 @@ class LimitError(Exception):
     """ Exception raised when a limit has not been found.
     """
     pass
+
+
+class ParameterError(Exception):
+    """ Raised when a parameter cannot be applied/loaded.
+    """
+    pass

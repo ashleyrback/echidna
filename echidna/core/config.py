@@ -427,7 +427,8 @@ class GlobalFitConfig(Config):
                         "sigma": <sigma>,
                         "low": <low>,
                         "high": <high>,
-                        "bins": <bins>}}}}
+                        "bins": <bins>,
+                        "pre_load": <True/False>}}}}
 
         For spectral config see :meth:`SpectralFitConfig.load`.
 
@@ -441,7 +442,7 @@ class GlobalFitConfig(Config):
         for dim in global_config[main_key]:
             for syst in global_config[main_key][dim]:
                 name = dim + "_" + syst
-                if syst == 'resolution' or syst == 'resolution_ly':
+                if syst == 'resolution_%' or syst == 'resolution_ly':
                     parameters[name] = {
                         'par': ResolutionParameter(
                             name, dimension=dim,
@@ -481,6 +482,12 @@ class GlobalFitConfig(Config):
                 raise IndexError("Unknown systematic in config: %s" % syst)
 
         return cls(name, parameters)
+
+    @classmethod
+    def load_blank(cls, name="global_fit_config"):
+        """Initialise an empty GlobalFitConfig
+        """
+        return cls(name, OrderedDict({}))
 
     @classmethod
     def load_from_file(cls, filename, sf_filename=None, name=None):

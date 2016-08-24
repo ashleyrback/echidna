@@ -1,6 +1,6 @@
 import echidna.output.store as store
-from echidna.fit.minimise import GridSearch
-from echidna.errors.custom_errors import CompatibilityError
+from echidna.fit.minimise import GridSearch, Minuit
+from echidna.errors.custom_errors import CompatibilityError, ParameterError
 from echidna.core.config import GlobalFitConfig
 
 import numpy
@@ -9,6 +9,8 @@ import collections
 import os
 import yaml
 import copy
+
+ncount = 0
 
 
 class Fit(object):
@@ -41,10 +43,8 @@ class Fit(object):
         the ROI.
       minimiser (:class:`echidna.limit.minimiser.Minimiser`, optional): Object
         to handle the minimisation.
-      use_pre_made (bool, optional): Flag whether to load a pre-made spectrum
-        for each systematic value, or apply convolutions on the fly.
-      pre_made_dir (string, optional): Directory in which pre-made convolved
-        spectra are stored.
+      pre_made_base_dir (string, optional): Directory in which pre-made
+        convolved spectra are stored.
       single_bin (bool, optional): Flag for a single bin fit (e.g. simple
         counting experiment).
       per_bin (bool, optional): Flag to monitor values of test
@@ -70,16 +70,13 @@ class Fit(object):
       _minimiser (:class:`echidna.limit.minimiser.Minimiser)`: Object to
         handle the minimisation.
       _checked (bool): If True then the fit class is ready to be used.
-      _use_pre_made (bool): Flag whether to load a pre-made spectrum
-        for each systematic value, or apply convolutions on the fly.
       _pre_made_dir (string): Directory in which pre-made convolved
         spectra are stored.
     """
     def __init__(self, roi, test_statistic, fit_config=None, data=None,
                  fixed_backgrounds=None, floating_backgrounds=None,
                  signal=None, shrink=True, per_bin=False, minimiser=None,
-                 use_pre_made=False, pre_made_base_dir=None,
-                 single_bin=False):
+                 pre_made_base_dir=None, single_bin=False):
         self._logger = logging.getLogger("Fit")
         self._checked = False
         self.set_roi(roi)
@@ -88,7 +85,7 @@ class Fit(object):
 
         if not fit_config:
             parameters = collections.OrderedDict({})
-            fit_config = GlobalFitConfig("gloabl_fit_config", parameters)
+            fit_config = GlobalFitConfig("global_fit_config", parameters)
         self.set_fit_config(fit_config)
 
         if data:
@@ -118,6 +115,7 @@ class Fit(object):
                                  "floating background is required")
 
         self._global_dict = {}
+        self._prev_spectra = {}
 
         # Now all floating backgrounds are loaded, check fit par values
         for par in self.get_fit_config().get_spectra_pars():
@@ -147,7 +145,6 @@ class Fit(object):
             self._minimiser = None
             self._logger.warning("Minimiser could not be set because: %s" %
                                  detail)
-        self._use_pre_made = use_pre_made
         self._pre_made_base_dir = pre_made_base_dir
         self._single_bin = single_bin
 
@@ -210,7 +207,6 @@ class Fit(object):
         if self._signal:
             if not self._signal_pars:
                 raise CompatibilityError("signal roi pars have not been set.")
-            self.check_spectra(self._signal)
 
         if self._floating_backgrounds:
             if not self._floating_pars:
@@ -443,9 +439,14 @@ class Fit(object):
         else:  # Pass to minimiser
             if self._minimiser is None:
                 raise AttributeError("Minimiser is not set.")
-            return self._minimiser.minimise(self._funct, self._test_statistic)
+            if type(self._minimiser) is GridSearch:
+                return self._minimiser.minimise(self._funct_grid,
+                                                self._test_statistic)
+            elif type(self._minimiser) is Minuit:
+                return self._minimiser.minimise(self._funct_root,
+                                                self._test_statistic)
 
-    def _funct(self, *args):
+    def _funct_grid(self, *args):
         """ Callable to pass to minimiser.
 
         Args:
@@ -463,6 +464,8 @@ class Fit(object):
         Raises:
           ValueError: If :attr:`_floating_backgrounds` is None. This
             method requires at least one floating background.
+          ParameterError: If it is attempted to load a pre-made spectrum
+            after other fit parameters have been applied to the spectrum.
 
         .. note:: This method should not be called directly, it is
           intended to be passed to an appropriate minimiser and
@@ -500,12 +503,33 @@ class Fit(object):
                     self._global_dict[background_name] = {}
                 if cur_val not in self._global_dict[background_name]:
                     fit_config = spectrum._fit_config
-                    if self._use_pre_made:  # Load pre-made spectrum from file
-                        spectrum = self.load_pre_made(spectrum, global_pars)
-                    else:
-                        for parameter in global_pars:
+                    applied = False
+                    load = False
+                    load_pars = []
+                    for parameter in global_pars:
+                        if parameter._pre_made:  # Load pre-made spectrum
+                            if applied:
+                                raise ParameterError(
+                                    "Trying to load pre-made after a "
+                                    "parameter has been applied. Rearrange "
+                                    "parameter order in config.")
+                            load_pars.append(parameter)
+                            load = True
+                        else:
+                            applied = True
+                            if load:
+                                spectrum = self.load_pre_made(spectrum,
+                                                              load_pars)
+                                load = False
                             spectrum = parameter.apply_to(spectrum)
+                    if load:
+                        spectrum = self.load_pre_made(spectrum,
+                                                      load_pars)
                     spectrum._fit_config = fit_config
+                    # Shrink to roi
+                    self._data.shrink_to_self(spectrum)
+                    # rebin
+                    spectrum.rebin(self._data._data.shape)
                     self._global_dict[background_name][cur_val] = spectrum
                 else:
                     spectrum = self._global_dict[background_name][cur_val]
@@ -517,11 +541,6 @@ class Fit(object):
                     spectrum = parameter.apply_to(spectrum)
 
             # Spectrum should now be fully convolved/scaled
-            # Shrink to roi
-            self.shrink_to_data(spectrum)
-            # rebin
-            spectrum.rebin(self._data._data.shape)
-            # and then add projection to expected spectrum
             if expected is not None:
                 expected += spectrum.nd_project(floating_pars)
             else:
@@ -536,18 +555,43 @@ class Fit(object):
                     self._global_dict[background_name] = {}
                 if cur_val not in self._global_dict[background_name]:
                     fit_config = self._signal._fit_config
-                    if self._use_pre_made:  # Load pre-made spectrum from file
+                    applied = False
+                    load = False
+                    load_pars = []
+                    signal = None
+                    for parameter in global_pars:
+                        if parameter._pre_made:  # Load pre-made spectrum
+                            if applied:
+                                raise ParameterError(
+                                    "Trying to load pre-made after a "
+                                    "parameter has been applied. Rearrange "
+                                    "parameter order in config.")
+                            load_pars.append(parameter)
+                            load = True
+                        else:
+                            applied = True
+                            if load:
+                                signal = self.load_pre_made(self._signal,
+                                                            load_pars)
+                                load = False
+                            if signal:
+                                signal = parameter.apply_to(signal)
+                            else:
+                                signal = parameter.apply_to(self._signal)
+                    if load:
+                        if applied:
+                            raise ParameterError(
+                                "Trying to load pre-made after a parameter "
+                                "has been applied. Rearrange parameter order "
+                                "in config.")
                         signal = self.load_pre_made(self._signal,
-                                                    global_pars)
-                    else:
-                        for parameter in global_pars:
-                            signal = parameter.apply_to(self._signal)
+                                                    load_pars)
                     signal._fit_config = fit_config
+                    self._data.shrink_to_self(signal)
+                    signal.rebin(self._data._data.shape)
                     self._global_dict[background_name][cur_val] = signal
                 else:
                     signal = self._global_dict[background_name][cur_val]
-                self.shrink_to_data(signal)
-                signal.rebin(self._data._data.shape)
                 signal.scale(num_decays)
             else:
                 signal = self._signal
@@ -580,7 +624,264 @@ class Fit(object):
 
         return test_statistic, total_penalty
 
-    def load_pre_made(self, spectrum, global_pars):
+    def _funct_root(self, npar, gin, chisq, args, iflag):
+        """ Callable to pass to minimiser.
+
+        Args:
+          npar (int): Number of parameters you are minimising.
+          gin (list): Gradient of paramters you are minimising.
+          chisq (float): The test statistic you are minimising.
+          args (list): Contains the parameters you are minimising.
+          iflag (int): Denotes various ROOT error states.
+
+        Returns:
+          float: The test statistic you are minimising.
+
+        Raises:
+          ValueError: If :attr:`_floating_backgrounds` is None. This
+            method requires at least one floating background.
+          ParameterError: If it is attempted to load a pre-made spectrum
+            after other fit parameters have been applied to the spectrum.
+
+        .. note:: This method should not be called directly, it is
+          intended to be passed to an appropriate minimiser and
+          called from within the minimisation algorithm.
+
+        .. note:: This method should not be used if there are no
+          floating backgrounds.
+
+        """
+        global ncount
+        if self._floating_backgrounds is None:
+            raise ValueError("The _funct method can only be used " +
+                             "with at least one floating background")
+
+        global_pars = self._fit_config.get_global_pars()
+
+        # Update parameter current values
+        use_prev = True
+        for i, par in enumerate(self._fit_config.get_pars()):
+            par = self._fit_config.get_par(par)
+            if par in global_pars:
+                if par._current_value != args[i]:
+                    use_prev = False
+            #print par._name, i, args[i]
+            par.set_current_value(args[i])
+
+        # Loop over all floating backgrounds
+        observed = self._data.nd_project(self._data_pars)
+        if self._fixed_background:
+            expected = self._fixed_background.nd_project(self._fixed_pars)
+        else:
+            expected = None
+        cur_val = ""
+        for parameter in global_pars:
+            cur_val += parameter._name + str(parameter._current_value) + "_"
+        spec = None
+        for spectrum, floating_pars in zip(self._floating_backgrounds,
+                                           self._floating_pars):
+            #print "Applying systs to", spectrum._name
+            spec = None
+            # Apply global parameters first
+            if global_pars:
+                fit_config = spectrum._fit_config
+                num_decays = spectrum._num_decays
+                bkgnd_name = spectrum.get_background_name()
+                i = 0
+                for parameter in global_pars:
+                    if use_prev:
+                        #print "global pars same, using previous spectra"
+                        break
+                    if parameter._pre_made:
+                        continue
+                    if 'resolution' in parameter._name:
+                        if i != 0:
+                            raise ParameterError("Resolution must be first "
+                                                 "global systematic.")
+                        spectra = []
+                        # Working for ly not % resolution:
+                        int_val = int(parameter._current_value)
+                        if float(int_val) == parameter._current_value:
+                            if bkgnd_name not in self._global_dict:
+                                self._global_dict[bkgnd_name] = {}
+                            if str(int_val) not in\
+                                    self._global_dict[bkgnd_name]:
+                                spec = self.load_pre_made(spectrum,
+                                                          [parameter],
+                                                          cur_val=int_val)
+                                spectrum.shrink_to_self(spec)
+                                spec.rebin(spectrum._data.shape)
+                                spec.scale(num_decays)
+                                self._global_dict[bkgnd_name][str(int_val)] =\
+                                    spec
+                            else:
+                                spec =\
+                                    self._global_dict[bkgnd_name][str(int_val)]
+                        else:
+                            for ly_idx in range(4):
+                                str_int = str(int_val + ly_idx - 2)
+                                if bkgnd_name not in self._global_dict:
+                                    self._global_dict[bkgnd_name] = {}
+                                if str_int not in \
+                                        self._global_dict[bkgnd_name]:
+                                    spec = self.load_pre_made(
+                                        spectrum, [parameter],
+                                        cur_val=str_int)
+                                    if spec:
+                                        spec.scale(num_decays)
+                                        spectrum.shrink_to_self(spec)
+                                        spec.rebin(spectrum._data.shape)
+                                        spectra.append(spec)
+                                        self._global_dict[bkgnd_name][str_int]\
+                                            = spec
+                                else:
+                                    spectra.append(
+                                        self._global_dict[bkgnd_name][str_int])
+                            spec = parameter.apply_to(
+                                spectra, parameter._name.split('_')[-1])
+                    else:
+                        if spec:
+                            spec = parameter.apply_to(spec)
+                        else:
+                            spec = paramter.apply_to(spectrum)
+                    i += 1
+                if not spec:
+                    spec = self._prev_spectra[spectrum._name]
+                else:
+                    self._prev_spectra[spectrum._name] = spec
+                spec._fit_config = fit_config
+                # Shrink to roi
+                #print "shrinking to roi"
+                self._data.shrink_to_self(spec)
+                # rebin
+                spec.rebin(self._data._data.shape)
+                spec.scale(num_decays)
+            # Apply spectrum-specific parameters
+            if not spec:
+                spec = spectrum
+            if spec._fit_config:
+                for par_name in spec._fit_config.get_pars():
+                    parameter = spec._fit_config.get_par(par_name)
+                    spec = parameter.apply_to(spec)
+
+            # Spectrum should now be fully convolved/scaled
+            if expected is not None:
+                expected += spec.nd_project(floating_pars)
+            else:
+                expected = spec.nd_project(floating_pars)
+        # Add signal, if required
+        if self._signal:
+            if global_pars:
+                num_decays = self._signal._num_decays
+                bkgnd_name = self._signal.get_background_name()
+                fit_config = self._signal._fit_config
+                signal = None
+                spec = None
+                i = 0
+                #print "Applying systs to signal"
+                for parameter in global_pars:
+                    if use_prev:
+                        break
+                    if parameter._pre_made:
+                        continue
+                    if 'resolution' in parameter._name:
+                        if i != 0:
+                            raise ParameterError("Resolution must be first "
+                                                 "global systematic.")
+                        spectra = []
+                        # Working for ly not % resolution:
+                        int_val = int(parameter._current_value)
+                        if float(int_val) == parameter._current_value:
+                            if bkgnd_name not in self._global_dict:
+                                self._global_dict[bkgnd_name] = {}
+                            if str(int_val) not in\
+                                    self._global_dict[bkgnd_name]:
+                                signal = self.load_pre_made(self._signal,
+                                                            [parameter],
+                                                            cur_val=int_val)
+                                self._floating_backgrounds[0].\
+                                    shrink_to_self(signal)
+                                signal.rebin(
+                                    self._floating_backgrounds[0]._data.shape)
+                                signal.scale(num_decays)
+                                self._global_dict[bkgnd_name][str(int_val)] =\
+                                    signal
+                            else:
+                                signal =\
+                                    self._global_dict[bkgnd_name][str(int_val)]
+                        else:
+                            for ly_idx in range(4):
+                                str_int = str(int_val + ly_idx - 2)
+                                if bkgnd_name not in self._global_dict:
+                                    self._global_dict[bkgnd_name] = {}
+                                if str_int not in \
+                                        self._global_dict[bkgnd_name]:
+                                    spec = self.load_pre_made(
+                                        self._signal, [parameter],
+                                        cur_val=str_int)
+                                    if spec:
+                                        spec.scale(num_decays)
+                                        self._floating_backgrounds[0].\
+                                            shrink_to_self(spec)
+                                        spec.rebin(
+                                            self._floating_backgrounds[0].
+                                            _data.shape)
+                                        spectra.append(spec)
+                                        self._global_dict[bkgnd_name][str_int]\
+                                            = spec
+                                else:
+                                    spectra.append(
+                                        self._global_dict[bkgnd_name][str_int])
+                            signal = parameter.apply_to(
+                                spectra, parameter._name.split('_')[-1])
+                    else:
+                        if signal:
+                            signal = parameter.apply_to(signal)
+                        else:
+                            signal = parameter.apply_to(self._signal)
+                    i += 1
+                if signal:
+                    self._prev_spectra[self._signal._name] = signal
+                else:
+                    signal = self._prev_spectra[self._signal._name]
+                signal._fit_config = fit_config
+                #print "shrinking to roi"
+                self._data.shrink_to_self(signal)
+                signal.rebin(self._data._data.shape)
+                signal.scale(num_decays)
+            else:
+                signal = self._signal
+            expected += signal.nd_project(self._signal_pars)
+
+        # If single bin - sum over expected and observed
+        if self._single_bin:
+            expected = numpy.sum(expected)
+            observed = numpy.sum(observed)
+
+        # Calculate value of test statistic
+        test_statistic = self._test_statistic.compute_statistic(
+            observed.ravel(), expected.ravel())
+
+        # Add penalty terms
+        total_penalty = 0.
+        for parameter in self._fit_config.get_pars():
+            par = self._fit_config.get_par(parameter)
+            current_value = par.get_current_value()
+            prior = par.get_prior()
+            sigma = par.get_sigma()
+            # If sigma is explicitly None add no penalty term
+            if (sigma is not None):
+                total_penalty += self._test_statistic.get_penalty_term(
+                    current_value, prior, sigma)
+
+        # Check for per_bin flag
+        if self._per_bin:
+            test_statistic = test_statistic.reshape(spectrum._data.shape)
+
+        chisq[0] = test_statistic + total_penalty
+        ncount += 1
+
+    def load_pre_made(self, spectrum, global_pars, cur_val=None):
         """ Load pre-made convolved spectra.
 
         This method is used to load a pre-made spectra convolved with
@@ -593,6 +894,9 @@ class Fit(object):
         Args:
           spectrum (:class:`echidna.core.spectra.Spectra`): Spectrum
             to convolve.
+          global_pars (list): Of global parameters that you want to pre load.
+          cur_val (float, optional): To overwrite the current value stored in
+            the parameter.
 
         Returns:
           (:class:`echidna.core.spectra.Spectra`): Convolved spectrum,
@@ -614,14 +918,18 @@ class Fit(object):
                 added_dim = True
                 directory += dim + '/'
             directory, filename = par.get_pre_convolved(directory, filename,
-                                                        added_dim)
+                                                        added_dim,
+                                                        cur_val=cur_val)
         # Load spectrum from hdf5
         num_decays = spectrum._num_decays
         fit_config = spectrum._fit_config
         orig_num_decays = None
         if hasattr(spectrum, '_orig_num_decays'):
             orig_num_decays = spectrum._orig_num_decays
-        spectrum = store.load(directory + filename)
+        if os.path.exists(directory + filename):
+            spectrum = store.load(directory + filename)
+        else:
+            return
         if orig_num_decays:
             spectrum._num_decays = orig_num_decays
         spectrum.scale(num_decays)
@@ -642,7 +950,7 @@ class Fit(object):
             # Copy so original spectra is unchanged
             self._logger.debug("Adding Spectra with name %s to"
                                "_fixed_background" % spectrum.get_name())
-            spectrum = copy.copy(spectrum)
+            spectrum = copy.deepcopy(spectrum)
             if first:
                 first = False
                 if shrink:
@@ -650,7 +958,6 @@ class Fit(object):
                 spectrum.scale(scaling)
                 total_spectrum = spectrum
                 total_spectrum._name = "Fixed Background"
-                total_spectrum.set_background_name("Fixed Background")
             else:
                 if shrink:
                     self.shrink_spectra(spectrum)
@@ -716,14 +1023,12 @@ class Fit(object):
         self._fixed_background = fixed_background
         self._fixed_pars = self.get_roi_pars(fixed_background)
 
-    def set_floating_backgrounds(self, floating_backgrounds, shrink=True):
+    def set_floating_backgrounds(self, floating_backgrounds):
         """ Sets the floating backgrounds you want to fit.
 
         Args:
           floating_backgrounds (list): List of backgrounds you want to float
             in the fit.
-          shrink (bool, optional): If set to True (default), :meth:`shrink`
-            method is called on the spectra shrinking it to the ROI.
         """
         floating_pars = []
         for background in floating_backgrounds:
@@ -734,10 +1039,6 @@ class Fit(object):
                 self.check_fit_config(background)
                 # Spectrum has a valid fit config, add to GlobalFit Config
                 self._fit_config.add_config(background.get_fit_config())
-            if shrink:
-                self.shrink_spectra(background)
-            else:
-                self.check_spectra(background)
             floating_pars.append(self.get_roi_pars(background))
         self._floating_backgrounds = floating_backgrounds
         self._floating_pars = floating_pars
@@ -752,7 +1053,7 @@ class Fit(object):
         Raises:
           IndexError: If fit config contains no parameters.
         """
-        self.check_all_spectra()  # all spectra must be set and checked first
+        self.check_all_spectra()  # All spectra should be set and checked first
         if minimiser:
             self._minimiser = minimiser
             self._logger.debug("Setting %s as minimiser" %
@@ -807,13 +1108,13 @@ class Fit(object):
         self._logger.debug("Set _roi as %s" % str(roi))
         self._checked = False  # Must redo checks for a new roi
 
-    def set_signal(self, signal, shrink=True):
+    def set_signal(self, signal, shrink=False):
         """ Sets the signal you want to fit.
 
         Args:
           signal (:class:`echidna.core.spectra.Spectra`): The signal
             spectrum you want to fit.
-          shrink (bool, optional): If set to True (default)
+          shrink (bool, optional): If set to True
             :meth:`shrink` method is called on the spectra shrinking
             it to the ROI.
         """
@@ -864,24 +1165,4 @@ class Fit(object):
             par_low = dim + "_" + dim_type + "_low"
             par_high = dim + "_" + dim_type + "_high"
             shrink[par_low], shrink[par_high] = self._roi[dim]
-        spectra.shrink(**shrink)
-
-    def shrink_to_data(self, spectra):
-        """ Shrinks the spectra used in the fit to the data.
-
-        Args:
-          spectra (:class:`echidna.core.spectra.Spectra`): Spectra you want to
-            shrink to the roi.
-        """
-        shrink = {}
-        for par_name in self._data.get_config().get_pars():
-            par = self._data.get_config().get_par(par_name)
-            low = par._low
-            high = par._high
-            dim = self._data.get_config().get_dim(par_name)
-            dim_type = spectra.get_config().get_dim_type(dim)
-            par_low = dim + "_" + dim_type + "_low"
-            par_high = dim + "_" + dim_type + "_high"
-            shrink[par_low] = low
-            shrink[par_high] = high
         spectra.shrink(**shrink)

@@ -78,6 +78,7 @@ class FitResults(object):
         for par in self._fit_config.get_pars():
             parameter = self._fit_config.get_par(par)
             fit_results[par] = {"best_fit": parameter.get_best_fit(),
+                                "best_fit_err": parameter.get_best_fit_err(),
                                 "penalty_term": parameter.get_penalty_term()}
         return fit_results
 
@@ -142,6 +143,7 @@ class LimitResults(FitResults):
         shape = (scales, len(fit_config.get_pars()))
         self._penalty_terms = numpy.zeros(shape)
         self._best_fits = numpy.zeros(shape)
+        self._best_fit_errs = numpy.zeros(shape)
         self._stats = numpy.zeros(scales)
         self._fit_results = numpy.empty(scales, dtype=object)
 
@@ -273,6 +275,18 @@ class LimitResults(FitResults):
         """
         par_idx = self._fit_config.get_index(par)
         self._best_fits[scale_idx][par_idx] = best_fit
+
+    def set_best_fit_err(self, scale_idx, best_fit_err, par):
+        """ Sets the best fit error for parameter with index par_idx and scale
+        with index scale_idx.
+
+        Args:
+          best_fit_err (float): Error on best fit.
+          scale_idx (int): Scale index.
+          par_idx (int): Fit parameter index.
+        """
+        par_idx = self._fit_config.get_index(par)
+        self._best_fit_errs[scale_idx][par_idx] = best_fit_err
 
     def set_penalty_term(self, scale_idx, penalty_term, par):
         """ Sets the penalty term for parameter with index par_idx and scale

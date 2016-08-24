@@ -51,15 +51,17 @@ class Scale(object):
         prescale_sum = spectrum.sum()
         interpolation = spectrum.interpolate1d(dimension, **kwargs)
         sf = self.get_scale_factor()
-        scaled_spec = copy.copy(spectrum)
+        scaled_spec = copy.deepcopy(spectrum)
         scaled_spec._name = spectrum._name + "_sf" + str(sf)
+        if sf == 1.:
+            return scaled_spec
         scaled_spec._data = numpy.zeros(spectrum._data.shape)
         n_dim = len(spectrum._data.shape)
         axis = spectrum.get_config().get_index(dimension)
         par = spectrum.get_config().get_par(dimension)
         low = par._low
         high = par._high
-        n_bins = par._bins
+        n_bins = int(par._bins)
         step = par.get_width()
         for bin in range(n_bins):
             x = par.get_bin_centre(bin)

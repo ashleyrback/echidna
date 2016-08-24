@@ -13,6 +13,7 @@ Examples:
 import numpy
 import itertools
 import copy
+from scipy import interpolate
 
 
 class Smear(object):
@@ -101,6 +102,46 @@ class Smear(object):
         low = mean - self._num_sigma*sigma
         high = mean + self._num_sigma*sigma
         return low, high
+
+    def interpolate(self, spectra, res_key, value, k):
+        """ Interpolates between a list of spectra to obtain a new smeared
+          spectrum at a given value.
+
+        Args:
+          spectra (list): Of spectrum at different resolutions you wish to
+            interpolate between.
+          res_key (str): Denotes the type of resolution par. e.g. 'ly' denotes
+            light yield.
+          value (float): The resolution value you wish to construct the
+            spectrum at.
+          k (int): Degree of smoothing of the spline. Must be <= 5.
+
+        Returns:
+          :class:`echidna.core.spectra.Spectra`: The smeared spectrum.
+        """
+        x = []
+        for spec in spectra:
+            x.append(float(spec._name.split(res_key)[-1].split('_')[0]))
+        if len(x) < 4.:
+            k = len(x) - 1
+        bins = []
+        for par_name in spectra[0].get_config().get_pars():
+            bins.append(range(spectra[0].get_config().get_par(par_name)._bins))
+        smeared_spec = copy.deepcopy(spectra[0])
+        name = spectra[0]._name.split(res_key)[0] + res_key + str(value) + "_"
+        for string in spectra[0]._name.split(res_key)[-1].split('_'):
+            name += string + "_"
+        name = name[:-1]
+        smeared_spec._name = name
+        smeared_spec._data = numpy.zeros(spectra[0]._data.shape)
+        for bin in itertools.product(*bins):
+            y = []
+            for spec in spectra:
+                y.append(spec._data[bin])
+            interp = interpolate.InterpolatedUnivariateSpline(x, y, k=k)
+            weight = interp(value)
+            smeared_spec._data[bin] = weight
+        return smeared_spec
 
 
 class EnergySmearLY(Smear):

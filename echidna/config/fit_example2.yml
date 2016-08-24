@@ -6,3 +6,4 @@ global_fit_parameters:
                         low: 175.
                         high: 225.
                         bins: 101
+                        pre_made: True
