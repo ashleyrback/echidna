@@ -1,8 +1,6 @@
 """ Fit results module, containing ``FitResults`` class.
 """
 import numpy
-import copy
-import itertools
 from collections import OrderedDict
 
 
@@ -133,6 +131,9 @@ class LimitResults(FitResults):
         best fits calculated during limit setting.
       _fit_results (:class:`echidna.fit.fit_results.FitResults`): An array of
         fit results for each signal scaling.
+      _limit (float): Signal scaling at limit
+      _limit_index (int): Index of limit signal scaling in signal
+        scales array
     """
     def __init__(self, fit_config, signal_config, limit_config, name=None):
         if name is None:
@@ -146,6 +147,8 @@ class LimitResults(FitResults):
         self._best_fit_errs = numpy.zeros(shape)
         self._stats = numpy.zeros(scales)
         self._fit_results = numpy.empty(scales, dtype=object)
+        self._limit = None
+        self._limit_index = None
 
     def get_best_fit(self, i, par):
         """Gets the best fit at scale index i.
@@ -199,17 +202,21 @@ class LimitResults(FitResults):
         return (numpy.sum(self._stats, axis=stat_axes) +
                 numpy.sum(self._penalty_terms, axis=penalty_axes))
 
-    def get_limit_stat(self, i):
-        """Gets the test statistic with penalty terms added for the signal
-          scale at index i.
-
-        Args:
-          i (int): Index of stat.
-
-        Returns:
-          float: The test statistic without the penalty contribution.
+    def get_limit(self):
         """
-        return self._limit_stat[i]
+        Returns:
+          float: Value of :attr:`_limit`, the signal scaling at the
+            limit
+        """
+        return self._limit
+
+    def get_limit_index(self):
+        """
+        Returns:
+          int: Value of :attr:`_limit_index`, index of the limit signal
+            scaling in the signal scales array
+        """
+        return self._limit_index
 
     def get_stats(self):
         """Gets the test statistics without the penalty contribution.
@@ -264,6 +271,17 @@ class LimitResults(FitResults):
         """
         return self._limit_config.get_par("rate").get_values()
 
+    def get_fit_result(self, scale_idx):
+        """ Sets the fit results object for a given signal scaling.
+
+        Args:
+          scale_idx (int): Scale index.
+
+        Returns:
+          :class:`Minimise`: Results from fitting a given signal scale
+        """
+        return self._fit_results[scale_idx]
+
     def set_best_fit(self, scale_idx, best_fit, par):
         """ Sets the best fit for parameter with index par_idx and scale
         with index scale_idx.
@@ -309,12 +327,30 @@ class LimitResults(FitResults):
        """
         self._stats[scale_idx] = stat
 
+    def set_limit(self, limit):
+        """ Sets value signal scale at limit
+
+        Args:
+          limit (float): Value of signal scale at limit
+        """
+        self._limit = limit
+
+    def set_limit_index(self, limit_index):
+        """ Sets index of the limit signal scaling in the signal scales
+        array
+
+        Args:
+          limit_index (int): Index of the limit singal scaling in the
+            signal scales array
+        """
+        self._limit_index = limit_index
+
     def set_fit_result(self, scale_idx, fit_result):
         """ Sets the fit results object for a given signal scaling.
 
         Args:
           scale_idx (int): Scale index.
-          fit_result (:class:`echidna.fit.fit_results.FitResults`): Results
-            from fitting a given signal scale.
+          fit_result (:class:`Minimise`): Results from fitting a given
+            signal scale.
         """
         self._fit_results[scale_idx] = fit_result

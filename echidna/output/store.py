@@ -1,3 +1,6 @@
+from echidna.utilities import start_logging
+logger = start_logging()  # To make sure we start logging here first
+
 from echidna.core.spectra import Spectra
 from echidna.core.config import (SpectraConfig, SpectraParameter,
                                  SpectraFitConfig, GlobalFitConfig)
@@ -10,10 +13,6 @@ import h5py
 import sys
 import collections
 import json
-import copy
-
-
-_logger = logging.getLogger("store")
 
 
 def dump(file_path, spectrum, group_name="spectrum",
@@ -38,7 +37,7 @@ def dump(file_path, spectrum, group_name="spectrum",
         file_opt = "w"
     with h5py.File(file_path, file_opt) as file_:
         if overwrite and group_name in file_.keys():  # Delete existing group
-            _logger.warning("Removing existing group %s" % group_name)
+            logger.warning("Removing existing group %s" % group_name)
             del file_[group_name]
         group = file_.create_group(group_name)
         group.attrs["name"] = spectrum.get_name()
@@ -64,7 +63,7 @@ def dump(file_path, spectrum, group_name="spectrum",
         else:
             group.attrs["rois"] = json.dumps(spectrum._rois)
         group.create_dataset("data", data=spectrum._data, compression="gzip")
-    _logger.info("Saved spectrum %s to %s" % (spectrum.get_name(), file_path))
+    logger.info("Saved spectrum %s to %s" % (spectrum.get_name(), file_path))
 
 
 def dump_ndarray(file_path, ndarray_object):
@@ -92,7 +91,7 @@ def dump_ndarray(file_path, ndarray_object):
                 raise AttributeError("attribute " + str(attr_name) + " is not "
                                      "an 'ndarray' and is too large to be "
                                      "saved as an h5py attribute.")
-    _logger.info("Saved %s to %s" % (str(ndarray_object), file_path))
+    logger.info("Saved %s to %s" % (str(ndarray_object), file_path))
 
 
 def dump_fit_results(file_path, fit_results,
@@ -101,7 +100,7 @@ def dump_fit_results(file_path, fit_results,
 
     Args:
       file_path (string): Location to save to.
-      summary (:class:`echdina.fit.fit_results.FitResults`): The
+      fit_results (:class:`echdina.fit.fit_results.FitResults`): The
         FitResults to save.
       group_name (string, optional): Name of HDF5 group to save to.
         Default is to save to "spectrum" group but allowing users to
@@ -116,23 +115,42 @@ def dump_fit_results(file_path, fit_results,
         file_opt = "w"
     with h5py.File(file_path, file_opt) as file_:
         group = file_.create_group(group_name)
+        try:
+            _dump_grid_search(group, fit_results)
+        except AttributeError:
+            logger.warning("echidna may not be able to save fit_results "
+                           "of type %s yet" % type(fit_results))
+            raise
+    logger.info("Saved fit results %s to %s" %
+                (fit_results.get_name(), file_path))
+
+
+def _dump_grid_search(group, fit_results):
+    """ Internal method to dump ``GridSearch``
+
+    Args:
+      group (:class:`h5py.Group`): Group to save ``GridSearch`` to
+      grid_search (:class:`GridSearch`): The ``GridSearch`` to save
+
+    """
+    if not fit_results.get_name():
+        group.attrs["name"] = "fit_results"
+    else:
         group.attrs["name"] = fit_results._name
-        group.attrs["spectra_config"] = json.dumps(
-            fit_results._spectra_config.dump())
-        group.attrs["spectra_config_name"] = (
-            fit_results._spectra_config.get_name())
-        group.attrs["fit_config"] = json.dumps(
-            fit_results._fit_config.dump())
-        group.attrs["fit_config_name"] = fit_results._fit_config.get_name()
+    group.attrs["spectra_config"] = json.dumps(
+        fit_results._spectra_config.dump())
+    group.attrs["spectra_config_name"] = (
+        fit_results._spectra_config.get_name())
+    group.attrs["fit_config"] = json.dumps(
+        fit_results._fit_config.dump())
+    group.attrs["fit_config_name"] = fit_results._fit_config.get_name()
 
-        group.create_dataset("penalty_terms", data=fit_results._penalty_terms,
-                             compression="gzip")
-        group.create_dataset("stats", data=fit_results._stats,
-                             compression="gzip")
-        group.attrs["resets"] = fit_results._resets
-
-    _logger.info("Saved fit results %s to %s" %
-                 (fit_results.get_name(), file_path))
+    # Create datasets
+    group.create_dataset("penalty_terms", data=fit_results._penalty_terms,
+                         compression="gzip")
+    group.create_dataset("stats", data=fit_results._stats,
+                         compression="gzip")
+    group.attrs["resets"] = fit_results._resets
 
 
 def dump_limit_results(file_path, limit_results,
@@ -170,6 +188,8 @@ def dump_limit_results(file_path, limit_results,
             limit_results._limit_config.get_name()
         group.attrs["limit_config_spectra_name"] = \
             limit_results._limit_config._spectra_name
+        group.attrs["limit"] = limit_results._limit
+        group.attrs["limit_index"] = limit_results._limit_index
         if limit_results._penalty_terms.any():
             group.create_dataset("penalty_terms",
                                  data=limit_results._penalty_terms,
@@ -184,20 +204,20 @@ def dump_limit_results(file_path, limit_results,
             group.attrs["fits_exist"] = 1.
             for i, fit_result in enumerate(limit_results._fit_results):
                 sub_group = group.create_group(str(i))
-                if type(fit_result) is GridSearch:
+                try:
+                    _dump_grid_search(sub_group, fit_result)
                     sub_group.attrs["exists"] = 1.
-                    sub_group.create_dataset("penalty_terms",
-                                             data=fit_result._penalty_terms,
-                                             compression="gzip")
-                    sub_group.create_dataset("stats", data=fit_result._stats,
-                                             compression="gzip")
-                    sub_group.attrs["resets"] = fit_result._resets
-                else:
+                except AttributeError:
                     sub_group.attrs["exists"] = 0.
+                    logger.warning(
+                        "echidna may not be able to save fit_results "
+                        "of type %s yet" % type(fit_result))
+                    raise
+            logger.info("Saved %d GridSearch instances" % i)
         else:
             group.attrs["fits_exist"] = 0.
-    _logger.info("Saved limit results %s to %s" %
-                 (limit_results.get_name(), file_path))
+    logger.info("Saved limit results %s to %s" %
+                (limit_results.get_name(), file_path))
 
 
 def load(file_path, group_name="spectrum"):
@@ -235,7 +255,7 @@ def load(file_path, group_name="spectrum"):
                         object_pairs_hook=OrderedDict),
                     spectra_name=spec_name, name=fit_config_name)
             except KeyError as detail:
-                _logger.warning("Handling run-time error: %s" % detail)
+                logger.warning("Handling run-time error: %s" % detail)
                 logging.getLogger("extra").warning(" --> setting to None")
                 fit_config = None
 
@@ -247,7 +267,7 @@ def load(file_path, group_name="spectrum"):
             try:
                 spec._bipo = group.attrs["bipo"]
             except KeyError as detail:
-                _logger.warning("Handling run-time error: %s" % detail)
+                logger.warning("Handling run-time error: %s" % detail)
                 logging.getLogger("extra").warning(" --> setting to 0")
                 spec._bipo = 0
             style_dict = group.attrs["style"]
@@ -265,10 +285,10 @@ def load(file_path, group_name="spectrum"):
                 pass
             spec._data = group["data"].value
             spec._location = file_path
-        _logger.info("Loaded spectrum %s" % spec.get_name())
+        logger.info("Loaded spectrum %s" % spec.get_name())
         return spec
     except KeyError as detail:
-        _logger.warning("Recieved KeyError: %s" % detail)
+        logger.warning("Recieved KeyError: %s" % detail)
         logging.getLogger("extra").warning(
             " --> attempting to load old-style")
         return _load_old(file_path)
@@ -301,10 +321,10 @@ def _load_old(file_path):
             spec._bipo = 0
         style_dict = file_.attrs["style"]
         if len(style_dict) > 0:
-            spec._style = string_to_dict(style_dict)
+            spec._style = json.loads(style_dict)
         rois_dict = file_.attrs["rois"]
         if len(rois_dict) > 0:
-            spec._rois = string_to_dict(rois_dict)
+            spec._rois = json.loads(rois_dict)
         # else the default values of Spectra __init__ are kept
         spec._data = file_["data"].value
     return spec
@@ -326,10 +346,10 @@ def load_ndarray(file_path, ndarray_object):
                 else:
                     setattr(ndarray_object, attr_name, file_.attrs[attr_name])
             except KeyError as detail:  # unable to locate attribute, skip
-                _logger.warning("Handling run-time error: %s" % detail)
+                logger.warning("Handling run-time error: %s" % detail)
                 logging.getLogger("extra").warning(" --> skipping")
                 continue
-    _logger.info("Loaded object %s" % str(ndarray_object))
+    logger.info("Loaded object %s" % str(ndarray_object))
     return ndarray_object
 
 
@@ -352,39 +372,56 @@ def load_fit_results(file_path, group_name="fit_results"):
     """
     with h5py.File(file_path, "r") as file_:
         group = file_[group_name]
+        try:
+            fit_results = _load_grid_search(group)
+        except KeyError:
+            raise
 
-        name = group.attrs["name"]
-        spectra_config_name = group.attrs["spectra_config_name"]
-        spectra_config = SpectraConfig.load(
-            json.loads(group.attrs["spectra_config"],
-                       object_pairs_hook=OrderedDict),
-            name=spectra_config_name)
-        fit_config_name = group.attrs["fit_config_name"]
-        fit_config = GlobalFitConfig.load(
-            json.loads(group.attrs["fit_config"],
-                       object_pairs_hook=OrderedDict)[0],
-            spectral_config=json.loads(group.attrs["fit_config"],
-                                       object_pairs_hook=OrderedDict)[1],
-            name=fit_config_name)
-
-        stats = group["stats"].value
-        if stats.shape == fit_config.get_shape():
-            per_bin = False
-        elif stats.shape == fit_config.get_shape() + \
-                spectra_config.get_shape():
-            per_bin = True
-        else:
-            raise ValueError("Stats shape inconsitent with fit_config and/or "
-                             "spectra_config shape.")
-        fit_results = GridSearch(fit_config=fit_config,
-                                 spectra_config=spectra_config, name=name,
-                                 per_bin=per_bin)
-        fit_results.set_stats(stats)
-        fit_results.set_penalty_terms(group["penalty_terms"].value)
-        fit_results._resets = group.attrs["resets"]
-
-    _logger.info("Loaded FitResults %s" % fit_results.get_name())
+    logger.info("Loaded FitResults %s" % fit_results.get_name())
     return fit_results
+
+
+def _load_grid_search(group):
+    """ Internal method to load grid_search from HDF5
+
+    Args:
+      group (:class:`h5py.Group`): HDF5 group to load from
+
+    Returns:
+      :class:`GridSearch`: Loaded ``GridSearch``
+
+    """
+    name = group.attrs["name"]
+    spectra_config_name = group.attrs["spectra_config_name"]
+    spectra_config = SpectraConfig.load(
+        json.loads(group.attrs["spectra_config"],
+                   object_pairs_hook=OrderedDict),
+        name=spectra_config_name)
+    fit_config_name = group.attrs["fit_config_name"]
+    fit_config = GlobalFitConfig.load(
+        json.loads(group.attrs["fit_config"],
+                   object_pairs_hook=OrderedDict)[0],
+        spectral_config=json.loads(group.attrs["fit_config"],
+                                   object_pairs_hook=OrderedDict)[1],
+        name=fit_config_name)
+
+    stats = group["stats"].value
+    if stats.shape == fit_config.get_shape():
+        per_bin = False
+    elif stats.shape == fit_config.get_shape() + \
+            spectra_config.get_shape():
+        per_bin = True
+    else:
+        raise ValueError("Stats shape inconsitent with fit_config and/or "
+                         "spectra_config shape.")
+    grid_search = GridSearch(fit_config=fit_config,
+                             spectra_config=spectra_config, name=name,
+                             per_bin=per_bin)
+    grid_search.set_stats(stats)
+    grid_search.set_penalty_terms(group["penalty_terms"].value)
+    grid_search._resets = group.attrs["resets"]
+
+    return grid_search
 
 
 def load_limit_results(file_path, group_name="limit_results"):
@@ -430,29 +467,31 @@ def load_limit_results(file_path, group_name="limit_results"):
         limit_results = LimitResults(fit_config, spectra_config, limit_config,
                                      name)
         try:
-            limit_results._penalty_terms = group["penalty_terms"].value
-        except:
-            pass
-        limit_results._stats = group["stats"].value
+            limit_results._limit = group.attrs["limit"]
+            limit_results._limit_index = group.attrs["limit_index"]
+        except KeyError as detail:
+            logger.warning("Handling run-time error: %s" % detail)
+            logging.getLogger("extra").warning(" --> skipping!")
         try:
+            limit_results._penalty_terms = group["penalty_terms"].value
             limit_results._best_fits = group["best_fits"].value
-        except:
-            pass
+        except KeyError as detail:
+            logger.warning("Handling run-time error: %s" % detail)
+            logging.getLogger("extra").warning(" --> skipping!")
+        limit_results._stats = group["stats"].value
         if group.attrs["fits_exist"] == 1.:
+            failures = 0
             for i in range(len(limit_results._stats)):
                 sub_group_name = group_name+"/"+str(i)
                 sub_group = file_[sub_group_name]
                 if sub_group.attrs["exists"] == 1.:
-                    fit_results = GridSearch(fit_config=fit_config,
-                                             spectra_config=spectra_config,
-                                             name=fit_config_name)
-                    fit_results._stats = sub_group["stats"].value
-                    fit_results._resets = sub_group.attrs["resets"]
-                    fit_results._penalty_terms = sub_group[
-                        "penalty_terms"].value
-                    for par in fit_results._fit_config.get_pars():
-                        p = fit_results._fit_config.get_par(par)
-                        p.set_best_fit(limit_results.get_best_fit(i, par))
-                    limit_results._fit_results[i] = copy.deepcopy(fit_results)
-    _logger.info("Loaded LimitResults %s" % limit_results.get_name())
+                    try:
+                        fit_result = _load_grid_search(sub_group)
+                        limit_results._fit_results[i] = fit_result
+                    except KeyError:
+                        failures += 1
+            if failures > 0:
+                logger.warning("Failed to load %d fit_results entries" %
+                               failures)
+    logger.info("Loaded LimitResults %s" % limit_results.get_name())
     return limit_results

@@ -15,3 +15,10 @@ class ParameterError(Exception):
     """ Raised when a parameter cannot be applied/loaded.
     """
     pass
+
+
+class ParameterWarning(RuntimeWarning):
+    """ Raised when parameter attributes are modified or set to a
+    spcial value
+    """
+    pass

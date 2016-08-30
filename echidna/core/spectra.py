@@ -590,6 +590,84 @@ class Spectra(object):
                                  "high": par._high,
                                  "efficiency": efficiency}
 
+    def subtract(self, spectrum):
+        """ Adds a spectrum to current spectra object.
+
+        Args:
+          spectrum (:class:`Spectra`): Spectrum to add.
+
+        Raises:
+          ValueError: spectrum has different dimenstions to the current
+            spectra.
+          IndexError: spectrum does not contain a dimension(s) that is in the
+            current spectra config.
+          IndexError: The current spectra does not contain a dimension(s) that
+            is in the spectrum config.
+          ValueError: The upper bounds of a parameter in the current spectra
+            and spectra are not equal.
+          ValueError: The lower bounds of a parameter in the current spectra
+            and spectra are not equal.
+          ValueError: The number of bins of a parameter in the current spectra
+            and spectra are not equal.
+        """
+        if self._data.shape != spectrum._data.shape:
+            raise ValueError("The spectra have different dimensions.\n"
+                             "Dimension of self: %s. Dimension of spectrum %s"
+                             % (self._data.shape, spectrum._data.shape))
+        for v in self._config.get_dims():
+            if v not in spectrum.get_config().get_dims():
+                raise IndexError("%s not present in new spectrum" % v)
+        for v in spectrum.get_config().get_dims():
+            if v not in self._config.get_dims():
+                raise IndexError("%s not present in this spectrum" % v)
+        # Dictionary containing dimensions which have different types in the
+        # two spectra. The type of the dimension of spectrum is the value
+        types = {}
+        for v in spectrum.get_config().get_pars():
+            if v not in self._config.get_pars():
+                dim = spectrum.get_config().get_dim(v)
+                dim_type = spectrum._config.get_dim_type(dim)
+                types[dim] = dim_type
+        for v in self._config.get_pars():
+            dim = self._config.get_dim(v)
+            if dim in types:
+                v_spec = dim+'_'+types[dim]
+            else:
+                v_spec = v
+            if not numpy.allclose(self.get_config().get_par(v)._high,
+                                  spectrum.get_config().get_par(v_spec)._high):
+                raise ValueError("Upper %s bounds in spectra are not equal."
+                                 "\n%s upper bound: %s\n%s upper bound: %s"
+                                 % (v, self._name,
+                                    self.get_config().get_par(v)._high,
+                                    spectrum._name,
+                                    spectrum.get_config().get_par(v_spec)
+                                    ._high))
+            if not numpy.allclose(self.get_config().get_par(v)._low,
+                                  spectrum.get_config().get_par(v_spec)._low):
+                raise ValueError("Lower %s bounds in spectra are not equal."
+                                 "\n%s lower bound: %s\n%s lower bound: %s"
+                                 % (v, self._name,
+                                    self.get_config().get_par(v)._low,
+                                    spectrum._name,
+                                    spectrum.get_config().get_par(v_spec)
+                                    ._low))
+            if self.get_config().get_par(v)._bins != \
+                    spectrum.get_config().get_par(v_spec)._bins:
+                raise ValueError("Number of %s bins in spectra are not equal."
+                                 "\n%s bins: %s\n%s lower bins: %s"
+                                 % (v, self._name,
+                                    self.get_config().get_par(v)._bins,
+                                    spectrum._name,
+                                    spectrum.get_config().get_par(v_spec)
+                                    ._bins))
+        self._data -= spectrum._data
+        self._raw_events -= spectrum._raw_events
+        self._num_decays -= spectrum._num_decays
+        if hasattr(self, '_orig_num_decays'):
+            if hasattr(spectrum, '_orig_num_decays'):
+                self._orig_num_decays -= spectrum._orig_num_decays
+
     def sum(self):
         """ Calculate and return the sum of the `_data` values.
 

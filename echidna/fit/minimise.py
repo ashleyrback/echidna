@@ -6,6 +6,7 @@ from echidna.fit.fit_results import FitResults
 
 import copy
 import abc
+import itertools
 from ROOT import TMinuit, Long, Double
 from array import array
 
@@ -395,24 +396,28 @@ class GridSearch(FitResults, Minimiser):
           IndexError: If the parameter names supplied do not match
             any of those stored in the fit or spectra configs.
         """
+        parameters = list(parameters)
         for parameter in parameters:
             if parameter not in itertools.chain(
                     self._fit_config.get_pars(),
                     self._spectra_config.get_pars()):
                 raise IndexError("Unknown parameter %s" % parameter)
-        if parameters in self._fit_config.get_pars():
+        all_fit_pars = False
+        for parameter in parameters:
+            all_fit_pars = parameter in self.get_fit_config().get_pars()
+        if all_fit_pars:
             # Can apply penalty term contributions
             projection = self.get_stat(indices)
-            for axis, parameter in self._fit_config.get_pars():
+            for axis, parameter in enumerate(self._fit_config.get_pars()):
                 if parameter not in parameters:
-                    projection = numpy.sum(projection, axis=axis)
+                    projection = numpy.nanmin(projection, axis=axis)
         else:  # No penalty terms, use raw stats
             projection = copy.copy(self.get_raw_stat(indices))
             for axis, parameter in enumerate(
                     itertools.chain(self._fit_config.get_pars(),
                                     self._spectra_config.get_pars())):
                 if parameter not in parameters:
-                    projection = numpy.sum(projection, axis=axis)
+                    projection = numpy.nanmin(projection, axis=axis)
         return projection
 
     def nd_project_stats(self, *parameters):
@@ -437,17 +442,21 @@ class GridSearch(FitResults, Minimiser):
           IndexError: If the parameter names supplied do not match
             any of those stored in the fit or spectra configs.
         """
+        parameters = list(parameters)
         for parameter in parameters:
             if parameter not in itertools.chain(
                     self._fit_config.get_pars(),
                     self._spectra_config.get_pars()):
                 raise IndexError("Unknown parameter %s" % parameter)
-        if parameters in self._fit_config.get_pars():
+        all_fit_pars = False
+        for parameter in parameters:
+            all_fit_pars = parameter in self.get_fit_config().get_pars()
+        if all_fit_pars:
             # Can apply penalty term contributions
             projection = self.get_stats()
-            for axis, parameter in self._fit_config.get_pars():
+            for axis, parameter in enumerate(self._fit_config.get_pars()):
                 if parameter not in parameters:
-                    projection = numpy.sum(projection, axis=axis)
+                    projection = numpy.nanmin(projection, axis=axis)
         else:  # No penalty terms, use raw stats
             projection = copy.copy(self.get_raw_stats())
             counter = 0
@@ -455,7 +464,7 @@ class GridSearch(FitResults, Minimiser):
                     itertools.chain(self._fit_config.get_pars(),
                                     self._spectra_config.get_pars())):
                 if parameter not in parameters:
-                    projection = numpy.sum(projection, axis=(axis-counter))
+                    projection = numpy.nanmin(projection, axis=(axis-counter))
                     counter = counter + 1  # compensate for earlier sums
         return projection
 

@@ -4,11 +4,13 @@ Contains :class:`Parameter` and all classes that inherit from it.
 """
 import numpy
 
+from echidna.utilities import start_logging
+from echidna.core import scale, shift, smear
+from echidna.errors.custom_errors import ParameterWarning
+
 import abc
 import logging
 import warnings
-
-from echidna.core import scale, shift, smear
 
 
 class Parameter(object):
@@ -201,10 +203,10 @@ class FitParameter(Parameter):
         """Initialise FitParameter class
         """
         super(FitParameter, self).__init__("fit", name, low, high, bins)
-        self._logger = logging.getLogger("FitParameter")
+        self._logger = start_logging("FitParameter")
         self._prior = float(prior)
         if sigma is None:
-            self._logger.warning(
+            ParameterWarning(
                 "Setting sigma explicitly as None for %s - "
                 "No penalty term will be added for this parameter!" % name)
         self._sigma = sigma
@@ -585,8 +587,8 @@ class FitParameter(Parameter):
                 self._prior = float(kwargs[kw])
             elif kw == "sigma":
                 if kwargs[kw] is None:
-                    self._logger.warning("Setting sigma explicitly as None - "
-                                         "No penalty term will be applied")
+                    ParameterWarning("Setting sigma explicitly as None - "
+                                     "No penalty term will be applied")
                 self._sigma = kwargs[kw]
             elif kw == "low":
                 self._low = float(kwargs[kw])
@@ -779,7 +781,7 @@ class ResolutionParameter(FitParameter):
             object
           added_dim (bool, optional): If a dimension has just been added to the
             directory then this flag is True.
-          cur_val (float, optional): Overwrites the current value stored in 
+          cur_val (float, optional): Overwrites the current value stored in
             :attr:`_current_value`.
 
         Returns:
@@ -909,7 +911,7 @@ class ScaleParameter(FitParameter):
             appended with name of this :class:`FitParameter`
           string: Name of pre-convolved :class:`Spectra`, appended with
             current value of this :class:`FitParameter`
-          cur_val (float, optional): Overwrites the current value stored in 
+          cur_val (float, optional): Overwrites the current value stored in
             :attr:`_current_value`.
 
         Raises:
@@ -1022,7 +1024,7 @@ class ShiftParameter(FitParameter):
             object
           added_dim (bool, optional): If a dimension has just been added to the
             directory then this flag is True.
-          cur_val (float, optional): Overwrites the current value stored in 
+          cur_val (float, optional): Overwrites the current value stored in
             :attr:`_current_value`.
 
         Returns:

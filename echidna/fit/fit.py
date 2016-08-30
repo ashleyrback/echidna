@@ -1,3 +1,4 @@
+from echidna.utilities import start_logging
 import echidna.output.store as store
 from echidna.fit.minimise import GridSearch, Minuit
 from echidna.errors.custom_errors import CompatibilityError, ParameterError
@@ -77,7 +78,7 @@ class Fit(object):
                  fixed_backgrounds=None, floating_backgrounds=None,
                  signal=None, shrink=True, per_bin=False, minimiser=None,
                  pre_made_base_dir=None, single_bin=False):
-        self._logger = logging.getLogger("Fit")
+        self._logger = start_logging(name="Fit")
         self._checked = False
         self.set_roi(roi)
 
@@ -526,10 +527,6 @@ class Fit(object):
                         spectrum = self.load_pre_made(spectrum,
                                                       load_pars)
                     spectrum._fit_config = fit_config
-                    # Shrink to roi
-                    self._data.shrink_to_self(spectrum)
-                    # rebin
-                    spectrum.rebin(self._data._data.shape)
                     self._global_dict[background_name][cur_val] = spectrum
                 else:
                     spectrum = self._global_dict[background_name][cur_val]
@@ -539,6 +536,12 @@ class Fit(object):
                 for par_name in spectrum._fit_config.get_pars():
                     parameter = spectrum._fit_config.get_par(par_name)
                     spectrum = parameter.apply_to(spectrum)
+
+            # Shrink to roi
+            self._data.shrink_to_self(spectrum)
+
+            # rebin
+            spectrum.rebin(self._data._data.shape)
 
             # Spectrum should now be fully convolved/scaled
             if expected is not None:
@@ -743,7 +746,7 @@ class Fit(object):
                         if spec:
                             spec = parameter.apply_to(spec)
                         else:
-                            spec = paramter.apply_to(spectrum)
+                            spec = parameter.apply_to(spectrum)
                     i += 1
                 if not spec:
                     spec = self._prev_spectra[spectrum._name]
@@ -950,7 +953,7 @@ class Fit(object):
             # Copy so original spectra is unchanged
             self._logger.debug("Adding Spectra with name %s to"
                                "_fixed_background" % spectrum.get_name())
-            spectrum = copy.deepcopy(spectrum)
+            spectrum = copy.copy(spectrum)
             if first:
                 first = False
                 if shrink:

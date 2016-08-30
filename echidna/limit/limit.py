@@ -1,15 +1,13 @@
 import numpy
 
+from echidna.utilities import start_logging
 from echidna.settings import user_profile
-from echidna.core.config import GlobalFitConfig
 from echidna.fit.fit_results import LimitResults
 from echidna.fit.minimise import GridSearch
-import echidna.output as output
 from echidna.errors.custom_errors import LimitError, CompatibilityError
 from echidna.output import store
 
 import logging
-import collections
 import yaml
 import datetime
 import json
@@ -48,7 +46,7 @@ class Limit(object):
     """
     def __init__(self, signal, fitter, signal_config=None,
                  shrink=True, store_all=False, save_dir=None):
-        self._logger = logging.getLogger(name="Limit")
+        self._logger = start_logging(name="Limit")
         self._fitter = fitter
         self._fitter.check_fit_config(signal)
         self._fitter.set_signal(signal, shrink=shrink)
@@ -115,11 +113,13 @@ class Limit(object):
           store_limit (bool, optional):  If True (default) then a hdf5 file
             containing the :class:`echidna.fit.fit_results.LimitResults`
             object is saved.
-          store_fits (bool, optional): If True then the
-            :class:`echidna.fit.fit_results.FitResults` objects at each signal
-            scale is stored in the
+          store_fits (bool, optional): If True then :class:`GridSearch`
+            objects at each signal scale are stored in the
             :class:`echidna.fit.fit_results.LimitResults` object.
             Default is False.
+
+              .. warning:: Only available for GridSearch
+
           store_spectra (bool, optional): If True then the spectra used for
             fitting are saved to hdf5. Default is False.
           limit_fname (string): Filename to save the
@@ -133,25 +133,35 @@ class Limit(object):
         """
         par = self._signal.get_fit_config().get_par("rate")
 
+        min_stat_shape = None
         if min_stat:  # If supplied specific stat_zero use this
             self._logger.warning("Overriding min_stat with supplied value")
             logging.getLogger("extra").warning(" --> %s" % min_stat)
+            if type(min_stat) is numpy.ndarray:
+                min_stat_shape = min_stat.shape
         else:  # check zero signal stat in case its not in self._stats
             self._fitter.remove_signal()
             fit_stats = self._fitter.fit()
             if type(fit_stats) is tuple:
                 fit_stats = fit_stats[0]
-            min_stat = copy.copy(fit_stats)
-            self._logger.info("Calculated stat_zero: %s" % min_stat)
-            fit_results = copy.deepcopy(self._fitter.get_minimiser())
+            if type(fit_stats) is numpy.ndarray:
+                min_stat_shape = fit_stats.shape
+            min_stat = numpy.sum(fit_stats)
+            self._logger.info(
+                "Calculated stat_zero (without penalty term): %.4f" % min_stat)
+            fit_results = copy.copy(self._fitter.get_minimiser())
             if fit_results:
+                summary = fit_results.get_summary()
                 self._logger.info("Fit summary:")
-                logging.getLogger("extra").info(
-                    "\n%s\n" % json.dumps(fit_results.get_summary()))
+                logging.getLogger("extra").info("\n%s\n" % json.dumps(summary))
+                for value in summary.values():
+                    min_stat += value.get("penalty_term")
+            self._logger.info(
+                "Calculated stat_zero (with penalty terms): %.4f" % min_stat)
 
         # Create stats array
-        if type(min_stat) is numpy.ndarray:
-            shape = self._signal.get_fit_config().get_shape() + min_stat.shape
+        if min_stat_shape:
+            shape = self._signal.get_fit_config().get_shape() + min_stat_shape
         else:
             shape = self._signal.get_fit_config().get_shape()
         stats = numpy.zeros(shape, dtype=numpy.float64)
@@ -178,7 +188,7 @@ class Limit(object):
                 fit_stats = fit_stats[0]
             stats[i] = fit_stats
 
-            fit_results = copy.deepcopy(self._fitter.get_minimiser())
+            fit_results = self._fitter.get_minimiser()
             if fit_results:
                 results_summary = fit_results.get_summary()
                 for par_name, value in results_summary.iteritems():
@@ -189,14 +199,37 @@ class Limit(object):
                     self._limit_results.set_penalty_term(
                         i, value.get("penalty_term"), par_name)
                 if store_fits:
-                    self._limit_results.set_fit_result(i, fit_results)
+                    # Make new GridSearch to store as deepcopy doesn't work
+                    fit_config = copy.copy(fit_results.get_fit_config())
+                    spectra_config = copy.copy(
+                        fit_results.get_spectra_config())
+                    try:
+                        grid_search = GridSearch(
+                            fit_config, spectra_config, per_bin=True)
+
+                        # Set stats
+                        grid_search.set_stats(copy.deepcopy(
+                            fit_results._stats))
+
+                        # Set penalty terms
+                        grid_search.set_penalty_terms(copy.deepcopy(
+                            fit_results._penalty_terms))
+
+                        # Save
+                        self._limit_results.set_fit_result(i, grid_search)
+                    except AttributeError:
+                        self._logger.warning(
+                            "Cannot store fit_results of type %s" %
+                            type(fit_results))
+                    except Exception:
+                        raise
 
         # Set stats in limit_results
         self._limit_results._stats = stats
-        stats = self._limit_results.get_full_stats()
+        stats = self._limit_results.get_full_stats()  # Adds penalty terms
 
         # Convert stats to delta - subtracting minimum
-        if numpy.nanmin(stats) < min_stat.sum():
+        if numpy.nanmin(stats) < numpy.sum(min_stat):
             # for sensitivity these should be the same, but when fitting to
             # data these may differ
             prev_min_stat = numpy.sum(min_stat)
@@ -209,6 +242,96 @@ class Limit(object):
         # Also want to know index of minimum
         min_bin = numpy.argmin(stats)
 
+        log_text = ""
+        log_text += "\n===== Limit Summary ====="
+        try:
+            # Slice from min_bin upwards
+            limit_index = numpy.where(stats[min_bin:] > limit)[0][0] + min_bin
+            self._limit_results.set_limit_index(limit_index)
+            limit = par.get_values()[limit_index]
+            self._limit_results.set_limit(limit)
+
+            # Save results
+            self._save_results(store_limit=store_limit,
+                               store_spectra=store_spectra,
+                               limit_fname=limit_fname)
+
+            # Write logging output
+            log_text += "\nLimit found at:\n"
+            log_text += "Signal Decays: %.4g\n" % limit
+            for parameter in self._fitter.get_fit_config().get_pars():
+                cur_par = self._fitter.get_fit_config().get_par(parameter)
+                log_text += "--- systematic: %s ---\n" % parameter
+                log_text += ("Best fit: %4g\n" %
+                             self._limit_results.get_best_fit(limit_index,
+                                                              parameter))
+                if cur_par.get_prior():
+                    log_text += ("Prior: %.4g\n" %
+                                 cur_par.get_prior())
+                if cur_par.get_sigma():
+                    log_text += ("Sigma: %.4g\n" %
+                                 cur_par.get_sigma())
+                log_text += ("Penalty term: %.4g\n" %
+                             self._limit_results.get_penalty_term(limit_index,
+                                                                  parameter))
+            log_text += "----------------------------\n"
+            log_text += ("Test statistic: %.4f\n" %
+                         numpy.sum(stats[limit_index]))
+            log_text += "N.D.F.: 1\n"  # Only fit one dof currently
+            logging.getLogger("extra").info("\n%s\n" % log_text)
+            return limit
+        except IndexError:
+            # Slice from min_bin upwards
+            limit_index = numpy.argmax(stats[min_bin:]) + min_bin
+            self._limit_results.set_limit_index(limit_index)
+            limit = par.get_values()[limit_index]
+            self._limit_results.set_limit(limit)
+
+            # Save results
+            self._save_results(store_limit=store_limit,
+                               store_spectra=store_spectra,
+                               limit_fname=limit_fname)
+
+            # Write logging output
+            log_text += "\nNo limit found:\n"
+            log_text += "Signal Decays (at max stat): %.4g\n" % limit
+            for parameter in self._fitter.get_fit_config().get_pars():
+                cur_par = self._fitter.get_fit_config().get_par(parameter)
+                log_text += "--- systematic: %s ---\n" % parameter
+                log_text += ("Best fit: %4g\n" %
+                             self._limit_results.get_best_fit(limit_index,
+                                                              parameter))
+                if cur_par.get_prior():
+                    log_text += ("Prior: %.4g\n" %
+                                 cur_par.get_prior())
+                if cur_par.get_sigma():
+                    log_text += ("Sigma: %.4g\n" %
+                                 cur_par.get_sigma())
+                log_text += ("Penalty term: %.4g\n" %
+                             self._limit_results.get_penalty_term(limit_index,
+                                                                  parameter))
+            log_text += "----------------------------\n"
+            log_text += ("Test statistic: %.4f\n" %
+                         numpy.sum(stats[limit_index]))
+            log_text += "N.D.F.: 1\n"  # Only fit one dof currently
+            logging.getLogger("extra").info("\n%s\n" % log_text)
+            raise LimitError("Unable to find limit. Max stat: %s, Limit: %s"
+                             % (stats.max(), limit))
+
+    def _save_results(self, store_limit=True,
+                      store_spectra=False, limit_fname=None):
+        """ Internal method to save limit results
+
+        Args:
+          store_limit (bool, optional):  If True (default) then a hdf5 file
+            containing the :class:`echidna.fit.fit_results.LimitResults`
+            object is saved.
+          store_spectra (bool, optional): If True then the spectra used for
+            fitting are saved to hdf5. Default is False.
+          limit_fname (string): Filename to save the
+            `:class:`echidna.fit.fit_results.LimitResults` to.
+
+        """
         if store_limit:
             if limit_fname:
                 if limit_fname[-5:] != '.hdf5':
@@ -237,62 +360,6 @@ class Limit(object):
                     store.dump(self._save_dir + fname, background)
             fname = self._signal._name + "_signal.hdf5"
             store.dump(self._save_dir + fname, self._signal)
-
-        log_text = ""
-        log_text += "\n===== Limit Summary ====="
-        try:
-            # Slice from min_bin upwards
-            i_limit = numpy.where(stats[min_bin:] > limit)[0][0]
-            limit = par.get_values()[min_bin + i_limit]
-            log_text += "\nLimit found at:\n"
-            log_text += "Signal Decays: %.4g\n" % limit
-            for parameter in self._fitter.get_fit_config().get_pars():
-                cur_par = self._fitter.get_fit_config().get_par(parameter)
-                log_text += "--- systematic: %s ---\n" % parameter
-                log_text += ("Best fit: %4g\n" %
-                             self._limit_results.get_best_fit(i_limit,
-                                                              parameter))
-                if cur_par.get_prior():
-                    log_text += ("Prior: %.4g\n" %
-                                 cur_par.get_prior())
-                if cur_par.get_sigma():
-                    log_text += ("Sigma: %.4g\n" %
-                                 cur_par.get_sigma())
-                log_text += ("Penalty term: %.4g\n" %
-                             self._limit_results.get_penalty_term(i_limit,
-                                                                  parameter))
-            log_text += "----------------------------\n"
-            log_text += "Test statistic: %.4f\n" % numpy.sum(stats[i_limit])
-            log_text += "N.D.F.: 1\n"  # Only fit one dof currently
-            logging.getLogger("extra").info("\n%s\n" % log_text)
-            return limit
-        except IndexError:
-            # Slice from min_bin upwards
-            i_limit = numpy.argmax(stats[min_bin:])
-            limit = par.get_values()[min_bin + i_limit]
-            log_text += "\nNo limit found:\n"
-            log_text += "Signal Decays (at max stat): %.4g\n" % limit
-            for parameter in self._fitter.get_fit_config().get_pars():
-                cur_par = self._fitter.get_fit_config().get_par(parameter)
-                log_text += "--- systematic: %s ---\n" % parameter
-                log_text += ("Best fit: %4g\n" %
-                             self._limit_results.get_best_fit(i_limit,
-                                                              parameter))
-                if cur_par.get_prior():
-                    log_text += ("Prior: %.4g\n" %
-                                 cur_par.get_prior())
-                if cur_par.get_sigma():
-                    log_text += ("Sigma: %.4g\n" %
-                                 cur_par.get_sigma())
-                log_text += ("Penalty term: %.4g\n" %
-                             self._limit_results.get_penalty_term(i_limit,
-                                                                  parameter))
-            log_text += "----------------------------\n"
-            log_text += "Test statistic: %.4f\n" % numpy.sum(stats[i_limit])
-            log_text += "N.D.F.: 1\n"  # Only fit one dof currently
-            logging.getLogger("extra").info("\n%s\n" % log_text)
-            raise LimitError("Unable to find limit. Max stat: %s, Limit: %s"
-                             % (stats.max(), limit))
 
     def get_statistics(self):
         """ Get the test statistics for all signal scalings.

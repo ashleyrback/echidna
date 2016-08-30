@@ -4,9 +4,8 @@ output plots - wsing ``matplotlib.pyplot`` as a backend.
 import matplotlib.pyplot as plt
 import numpy
 
-import logging
-
-_logger = logging.getLogger("plot")
+from echidna.utilities import start_logging
+logger = start_logging()
 
 
 def plot_projection(spectra, dimension, fig_num=1,
@@ -64,7 +63,7 @@ def plot_projection(spectra, dimension, fig_num=1,
         roi = spectra.get_roi(config.get_dim(dimension))
         ax.xlim(roi)
     except KeyError:
-        _logger.warning("Cannot set x-limits from ROI", exc_info=1)
+        logger.warning("Cannot set x-limits from ROI", exc_info=1)
 
     if show_plot:
         plt.show()
@@ -73,10 +72,15 @@ def plot_projection(spectra, dimension, fig_num=1,
 
 def spectral_plot(dimension, fig=None, fig_num=1, subplot_kw={},
                   data=None, backgrounds=[], signals=[], xlabel=None,
-                  ylabel=None, legend=True, data_errors=True, plot_kw={},
+                  ylabel=None, legend=True, data_errors=True,
+                  plot_kw={"marker": "o",
+                           "markersize": 3.5, "linestyle": ""},
                   sum_bkg_style={"color": "Red",
                                  "label": "summed background"},
-                  hist_kw={"histtype": "step"}, legend_kw={}, show_plot=True):
+                  hist_kw={"histtype": "step"},
+                  legend_kw={"fontsize": "small", "numpoints": 1,
+                             "fancybox": True, "framealpha": 0.5},
+                  show_plot=True):
     """ Produce a spectral plot, given some data and any number of
     signals or backgrounds.
 
@@ -122,10 +126,10 @@ def spectral_plot(dimension, fig=None, fig_num=1, subplot_kw={},
       tuple: fig, ax
     """
     if fig:  # unpack
-        _logger.warning("Using existing fig, ax for plot")
+        logger.warning("Using existing fig, ax for plot")
         fig, ax = fig
     else:  # construct
-        _logger.warning("Generating new fig, ax using plt.subplots")
+        logger.warning("Generating new fig, ax using plt.subplots")
         fig, ax = plt.subplots(**subplot_kw)
 
     # Plot data
@@ -270,7 +274,7 @@ def plot_stats_vs_scale(limit_results, fig_num=1, subplots_kw={},
     return fig
 
 
-def plot_chi_squared_contour(x, y, chi_squareds, fig=None,
+def plot_chi_squared_contour(xs, ys, chi_squareds, fig=None,
                              fig_num=1, subplot_kw={},
                              contour_kw={"levels": [1., 2., 3.],
                                          "colors": "k"},
@@ -278,8 +282,8 @@ def plot_chi_squared_contour(x, y, chi_squareds, fig=None,
     """ Produces a contour plot of the 2D chi-squared surface.
 
     Args:
-      x (numpy.ndarray): List of x-axis points on the surface grid
-      y (numpy.ndarray): List of y-axis points on the surface grid
+      xs (numpy.ndarray): List of x-axis points on the surface grid
+      ys (numpy.ndarray): List of y-axis points on the surface grid
       chi_squareds (numpy.ndarray): Two dimensional chi-squared array
         of the chi-squared surface
       fig (tuple, optional): Pre-constructed
@@ -296,21 +300,20 @@ def plot_chi_squared_contour(x, y, chi_squareds, fig=None,
       xlabel (string, optional): Title of the x-axis
       ylabel (string, optional): Title of the y-axis
       show_plot (bool, optionl): Displays the plot on-screen if True
-        (default)
 
     Returns:
       tuple: fig, ax
 
     """
     if fig:  # unpack
-        _logger.warning("Using existing fig, ax for plot")
+        logger.warning("Using existing fig, ax for plot")
         fig, ax = fig
     else:  # construct
-        _logger.warning("Generating new fig, ax using plt.subplots")
-        fig, ax = plt.subplots(fig_num=fig_num, **subplot_kw)
+        logger.warning("Generating new fig, ax using plt.subplots")
+        fig, ax = plt.subplots(num=fig_num, **subplot_kw)
 
     # Create meshgrid
-    X, Y = numpy.meshgrid(x, y)
+    X, Y = numpy.meshgrid(xs, ys)
     Z = chi_squareds
 
     contour = ax.contour(X, Y, Z, **contour_kw)

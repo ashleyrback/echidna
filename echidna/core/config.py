@@ -2,6 +2,7 @@
 
 Contains the :class:`Config` class and all classes that inherit from it.
 """
+from echidna.utilities import start_logging
 from echidna.core.parameter import (RateParameter, ScaleParameter,
                                     ShiftParameter, ResolutionParameter,
                                     SpectraParameter)
@@ -30,7 +31,7 @@ class Config(object):
     def __init__(self, name, parameters):
         """ Initialise config class
         """
-        self._logger = logging.getLogger("Config")
+        self._logger = start_logging("Config")
         self._name = name
         self._type = "general"
         self._parameters = parameters
